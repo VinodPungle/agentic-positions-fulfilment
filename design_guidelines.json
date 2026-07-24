@@ -1,0 +1,111 @@
+{
+  "theme": "Dark Mode Command Center (Archetype 4: Swiss Brutalist + Technical)",
+  "typography": {
+    "fonts": {
+      "headings": "Cabinet Grotesk",
+      "body": "IBM Plex Sans",
+      "mono": "JetBrains Mono"
+    },
+    "rules": {
+      "h1": "text-4xl sm:text-5xl tracking-tight leading-none font-black",
+      "h2": "text-2xl sm:text-3xl tracking-tight leading-tight font-bold",
+      "h3": "text-xl sm:text-2xl tracking-tight",
+      "labels": "text-xs tracking-[0.2em] uppercase font-mono text-muted-foreground",
+      "body": "text-sm sm:text-base leading-relaxed font-sans",
+      "anti_patterns": "NO Inter, Roboto, or Lato for headings. NO generic bolding. Use tracking-tight for sizes > 32px."
+    }
+  },
+  "colors": {
+    "background": "#0A0A0A",
+    "surface": "#121212",
+    "foreground": "#FFFFFF",
+    "muted_foreground": "#888888",
+    "borders": "rgba(255, 255, 255, 0.15)",
+    "primary_accent": "#007AFF", 
+    "pending_warning": "#FF3B30",
+    "success": "#32D74B",
+    "anti_patterns": "NO pure black (#000000). NO generic full-screen gradients. NO teal green or teal blue (#1B93A4)."
+  },
+  "visual_enhancers": {
+    "surface_strategy": "Grid Borders (Technical Look). Use border-collapse style layouts. 1px solid strokes instead of soft shadows.",
+    "glassmorphism": "Used ONLY for sticky headers/floating panels: bg-black/60 backdrop-blur-xl border-t border-white/10.",
+    "agent_chat": "Retro-Futurism / Terminal Look. Deep black background, Volt Blue text for agent responses, subtle drop-shadow glow.",
+    "textures": "Subtle noise overlay (opacity-5) on the main background to break the digital flatness."
+  },
+  "components": {
+    "strategy": "Shadcn UI combined with raw HTML/Tailwind for layouts.",
+    "modifications": "Strip Vercel-like soft shadows. Use sharp edges or max 4px (rounded-sm) border-radius. Override tablist height (h-9 to h-auto).",
+    "forms": "Use Shadcn Form, Input, Select. NO native HTML inputs.",
+    "toasts": "Use Sonner for toast notifications.",
+    "charts": "Shadcn charts or Recharts for pipeline metrics."
+  },
+  "grids_and_layouts": {
+    "strategy": "The 'Bento' Grid Protocol - Mode B (High Density Grid).",
+    "base": "grid-cols-1 md:grid-cols-3 lg:grid-cols-4 with gap-4 or gap-6.",
+    "spacing": "Generous internal padding (p-6, p-8) to prevent text collision. Dense outer grid gaps.",
+    "alignment": "Optical alignment over geometrical. Left-align dense data, lists, and forms."
+  },
+  "motion": {
+    "rules": "Minimalist. Micro-interactions for feedback. NO generic 'transition-all'.",
+    "hover": "-translate-y-[1px] and explicit color shifts.",
+    "agent_feed": "Smooth stagger entrances for agent registry and chat panels."
+  },
+  "accessibility": {
+    "contrast": "APCA preferred. Minimum 4.5:1 for normal text.",
+    "testing": "All interactive elements MUST include a data-testid attribute (kebab-case, role-based).",
+    "motion": "Respect prefers-reduced-motion."
+  },
+  "media": {
+    "icons": "Phosphor Icons (@phosphor-icons/react) for dense dashboard clarity.",
+    "illustrations": "Avoid generic vectors. Rely on typography and grid lines for structure."
+  },
+  "image_urls": {
+    "ai_agents": [
+      {
+        "url": "https://images.unsplash.com/photo-1750096319146-6310519b5af2?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1Nzh8MHwxfHNlYXJjaHwzfHxyb2JvdCUyMGhlYWQlMjAzZCUyMHJlbmRlciUyMGF2YXRhcnxlbnwwfHx8fDE3ODQ4NjgzMjl8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Glowing eyes emanate from a digital face (Main Orchestrator Agent)"
+      },
+      {
+        "url": "https://images.pexels.com/photos/37911158/pexels-photo-37911158.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Futuristic digital head with code projection (Evaluation Agent)"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1625314887424-9f190599bd56?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1Nzh8MHwxfHNlYXJjaHwxfHxyb2JvdCUyMGhlYWQlMjAzZCUyMHJlbmRlciUyMGF2YXRhcnxlbnwwfHx8fDE3ODQ4NjgzMjl8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Black and white robot illustration (Scheduling Agent)"
+      }
+    ],
+    "human_personas": [
+      {
+        "url": "https://images.unsplash.com/photo-1494790108377-be9c29b29330?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1MTN8MHwxfHNlYXJjaHwzfHxwcm9mZXNzaW9uYWwlMjBoZWFkc2hvdCUyMHBvcnRyYWl0fGVufDB8fHx8MTc4NDg2ODMyOHww&ixlib=rb-4.1.0&q=85",
+        "description": "Woman smiling (Project Manager Profile)"
+      },
+      {
+        "url": "https://images.pexels.com/photos/37148308/pexels-photo-37148308.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Business professional in blue suit (Delivery Manager Profile)"
+      }
+    ]
+  },
+  "instructions_to_main_agent": [
+    "You have .js and .jsx files in the current setup. DO NOT output or assume .tsx files.",
+    "Implement a dark mode toggle, but default the application to 'dark' theme.",
+    "Build the dashboard using a 'command center' technical aesthetic: stark grids, 1px visible borders, high density, and monospace metadata.",
+    "Design the 6-agent chat panels using a terminal-inspired look: dark backgrounds, high-contrast Volt Blue text for agent responses, clear layout distinction between human and agent messages.",
+    "Ensure all interactive elements have data-testid attributes for testing.",
+    "Never use purely transparent backgrounds under content. Use glassmorphism or solid fills."
+  ],
+  "universal_guidelines_for_main_agent": [
+    "You tend to converge toward generic, 'on distribution' outputs. Avoid the 'AI slop' aesthetic.",
+    "Dark colors look good when used independently without gradients. DO NOT use dark colors as gradients.",
+    "Don't make generic centered layouts, simplistic gradients, and uniform styling.",
+    "Create depth through layered design elements with z-index hierarchy.",
+    "Use glass-morphism effects with backdrop filters (12-24px blur).",
+    "You MUST NOT apply universal transition (e.g., transition: all). Add transitions for specific interactive elements excluding transforms.",
+    "You MUST NOT center align the app container, i.e., do not add .App { text-align: center; }.",
+    "Always use modern button styles (e.g., sharp technical buttons) with interaction animations & color relevant to the app style.",
+    "NEVER use AI assistant Emoji characters like 🤖🧠💭💡🔮🎯 etc for icons.",
+    "Every interaction needs micro-animations - hover states, transitions, parallax effects, and entrance animations.",
+    "Use 2-3x more spacing than feels comfortable. Cramped designs look cheap.",
+    "Prioritize using pre-existing components from src/components/ui when applicable.",
+    "Use 'sonner' for toasts, located in /app/frontend/src/components/ui/sonner.js or .jsx."
+  ]
+}
