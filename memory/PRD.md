@@ -28,29 +28,29 @@ Full document: /app/ARCHITECTURE.md
 ## What's Been Done (June 2026)
 - [x] Requirements gathering + confirmed choices
 - [x] Full solution architecture & phased implementation plan (/app/ARCHITECTURE.md), updated for multi-project ownership + role-aware scoped chat
+- [x] **Phase 1 MVP prototype built & fully tested (30/30 backend, 15/15 UI flows)** — all integrations MOCKED per user request:
+  - PostgreSQL in-container (supervisor-managed); DATABASE_URL in backend/.env — swap to hosted Postgres (Neon/Supabase) at deploy
+  - 6 agents with A2A agent cards, task log w/ idempotency keys, per-agent SSE-streaming chat (OpenAI gpt-5.4-mini via Emergent key)
+  - Evaluation Agent: real LLM (gpt-4o) JD↔CV ranking, RankedCandidateList.v1 artifact, content-hash idempotent
+  - Orchestrator state machine + events audit spine + transactional outbox (mock Slack feed + mock email inbox in Comms page)
+  - PM approval gate (project-routed, DM override, staffing blocked), scheduling with skill/load interviewer matching, mock calendar/Meet
+  - Monitoring: 1h invite SLA, sweep w/ idempotent reminders, simulated accept/decline, feedback + real AI transcript summary
+  - Reporting: scoped summaries + idempotent daily digest distribution
+  - Role-scoped everything via persona switcher (Diana dm / Priya pm-Phoenix / Pablo pm-Atlas / Sam staffing)
+  - CSV import wizard (positions + interviewers, upsert = re-import safe)
 
 ## Backlog (prioritized)
-### P0 — Phase 1 MVP (awaiting user approval to build)
-- Postgres schema + events + outbox + FileStore
-- Evaluation Agent (JD/CV upload → ranked list, human + machine formats)
-- Orchestrator: state machine, project-routed PM approval gate, role-scoped chat
-- Scheduling Agent with mock calendar/email adapters (in-app viewers)
-- Notifier with real Slack (needs bot token from user) + mock email
-- Import wizard (positions/interviewers CSV, CV zip)
-- Dashboard: pipeline board, approval queue, per-agent chats, notification log
-- Seeded demo users (DM, 2 PMs, Staffing)
+### P1 — Phase 2 enhancements
+- Slack interactive approvals; scheduled (cron) report distribution; reassignment flow after decline (auto re-match excluding declined interviewer is implemented; surface a dedicated button)
+- Real login/auth (JWT or Google SSO) replacing persona switcher
 
-### P1 — Phase 2
-- Monitoring Agent (invite SLA, Slack reminders, feedback form, transcript → LLM summary)
-- Reporting Agent (scheduled + on-change, role-scoped distribution)
-- Slack interactive approvals
-
-### P2 — Phases 3–4
+### P2 — Phase 3–4
+- Real Slack bot (token from user) behind existing Notifier
 - Real Google Workspace adapters (Calendar/Meet/Gmail/Drive), per-agent service accounts
-- Service split, SSO, analytics
+- Hosted PostgreSQL for deployment (CONFIRM AT DEPLOY TIME)
+- Service split, analytics (time-to-fill, funnel)
 
 ## Next Tasks
-1. User reviews architecture → approval or change requests
-2. Collect Slack bot token + channel(s); optional sample JD/CVs/sheet exports
-3. Decide build-time DB detail (in-container Postgres for MVP; hosted URL at deploy)
-4. Begin Phase 1 implementation
+1. User reviews prototype; feedback iterations
+2. Phase 2: real Slack + interactive approvals when user provides bot token
+3. At deploy: provide hosted Postgres URL (Neon/Supabase) — in-container Postgres is preview-only

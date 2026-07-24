@@ -51,7 +51,7 @@ export default function AgentsPage() {
         </div>
         <div className="space-y-4">
           {activeAgent && (
-            <div className="border border-white/15 bg-[#121212] p-5" data-testid="agent-card-detail">
+            <div className="border border-white/15 bg-[#121212] p-5" data-testid="agent-detail-panel">
               <p className="font-mono text-[10px] tracking-[0.2em] text-white/40 uppercase">a2a.agent-card.v1</p>
               <div className="flex flex-wrap gap-2 mt-3">
                 {activeAgent.skills.map((s) => <span key={s} className="font-mono text-[10px] border border-[#007AFF]/40 text-[#007AFF] px-2 py-1">{s}</span>)}
