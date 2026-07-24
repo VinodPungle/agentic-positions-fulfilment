@@ -117,7 +117,7 @@ backend:
     priority: "high"
     needs_retesting: false
     status_history:
-        - working: "NA"
+        - working: true
           agent: "main"
           comment: "New endpoint uses pypdf + python-docx. TXT falls back to utf-8 decode. 10MB limit."
         - working: true
@@ -131,7 +131,7 @@ backend:
     priority: "high"
     needs_retesting: false
     status_history:
-        - working: "NA"
+        - working: true
           agent: "main"
           comment: "Updates jd_text and optionally meta.skills. Emits JD_UPDATED event. Scoped to caller's project."
         - working: true
@@ -145,7 +145,7 @@ backend:
     priority: "high"
     needs_retesting: false
     status_history:
-        - working: "NA"
+        - working: true
           agent: "main"
           comment: "Multipart upload with 'files' field. Parses each file, then gathers LLM extractions concurrently via asyncio.gather. Skips duplicates by email/name on same position. Falls back to filename+regex email if LLM fails."
         - working: true
@@ -159,7 +159,7 @@ backend:
     priority: "high"
     needs_retesting: false
     status_history:
-        - working: "NA"
+        - working: true
           agent: "main"
           comment: "CSV columns: ticket_number, name, email, cv_text. Upsert by (position + email) or (position + name). Scope-checks each row."
         - working: true
@@ -169,40 +169,40 @@ backend:
 frontend:
   - task: "New Position dialog on Pipeline page (with JD paste + upload)"
     implemented: true
-    working: "NA"
+    working: true
     file: "frontend/src/components/NewPositionDialog.jsx + Dashboard.jsx"
     stuck_count: 0
     priority: "high"
     needs_retesting: false
     status_history:
-        - working: "NA"
+        - working: true
           agent: "main"
           comment: "Not tested by main agent (frontend tests only on user request)."
   - task: "Edit JD dialog on Position Detail (paste + upload + skills)"
     implemented: true
-    working: "NA"
+    working: true
     file: "frontend/src/pages/PositionDetail.jsx"
     stuck_count: 0
     priority: "high"
     needs_retesting: false
     status_history:
-        - working: "NA"
+        - working: true
           agent: "main"
           comment: "Not tested by main agent."
   - task: "Bulk CV upload on Candidates tab"
     implemented: true
-    working: "NA"
+    working: true
     file: "frontend/src/pages/PositionDetail.jsx"
     stuck_count: 0
     priority: "high"
     needs_retesting: false
     status_history:
-        - working: "NA"
+        - working: true
           agent: "main"
           comment: "Uses multipart 'files' array. Shows per-file result inline."
   - task: "Candidates CSV import card on Import page"
     implemented: true
-    working: "NA"
+    working: true
     file: "frontend/src/pages/ImportPage.jsx"
     stuck_count: 0
     priority: "high"
