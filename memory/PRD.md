@@ -29,7 +29,7 @@ Full document: /app/ARCHITECTURE.md
 - [x] Requirements gathering + confirmed choices
 - [x] Full solution architecture & phased implementation plan (/app/ARCHITECTURE.md), updated for multi-project ownership + role-aware scoped chat
 - [x] **Phase 1 MVP prototype built & fully tested (30/30 backend, 15/15 UI flows)** — all integrations MOCKED per user request:
-  - PostgreSQL in-container (supervisor-managed); DATABASE_URL in backend/.env — swap to hosted Postgres (Neon/Supabase) at deploy
+- Database: **MongoDB** (migrated from in-container Postgres for deployment, June 2026 — user approved; Emergent auto-provisions managed Atlas in production). Same document shape; idempotency preserved via unique indexes (outbox.idempotency_key, a2a_tasks.idempotency_key, interviews.idempotency_key, evaluations.input_hash, positions.ticket_number, interviewers.email). All flows re-verified post-migration (scoping, 403 denial, evaluate + reuse, approve + idempotent re-decide, schedule + idempotent re-run, feedback + AI transcript summary, SLA sweep dedupe, report daily dedupe, SSE chat, CSV upsert import).
   - 6 agents with A2A agent cards, task log w/ idempotency keys, per-agent SSE-streaming chat (OpenAI gpt-5.4-mini via Emergent key)
   - Evaluation Agent: real LLM (gpt-4o) JD↔CV ranking, RankedCandidateList.v1 artifact, content-hash idempotent
   - Orchestrator state machine + events audit spine + transactional outbox (mock Slack feed + mock email inbox in Comms page)
@@ -47,10 +47,9 @@ Full document: /app/ARCHITECTURE.md
 ### P2 — Phase 3–4
 - Real Slack bot (token from user) behind existing Notifier
 - Real Google Workspace adapters (Calendar/Meet/Gmail/Drive), per-agent service accounts
-- Hosted PostgreSQL for deployment (CONFIRM AT DEPLOY TIME)
 - Service split, analytics (time-to-fill, funnel)
 
 ## Next Tasks
-1. User reviews prototype; feedback iterations
-2. Phase 2: real Slack + interactive approvals when user provides bot token
-3. At deploy: provide hosted Postgres URL (Neon/Supabase) — in-container Postgres is preview-only
+1. Redeploy on MongoDB (deployer dispatched)
+2. User reviews prototype; feedback iterations
+3. Phase 2: real Slack + interactive approvals when user provides bot token

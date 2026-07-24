@@ -1,8 +1,6 @@
-from datetime import timedelta
-from db import SessionLocal, engine
-from models import (Base, Project, User, UserProjectAssignment, Position, Candidate,
-                    Evaluation, Interviewer, Interview, Approval, Outbox)
-from pipeline import record_event, notify, now
+from datetime import datetime, timezone, timedelta
+from db import db, uid, now_iso, ensure_indexes
+from pipeline import record_event, notify
 
 JD_PYTHON = """Senior Backend Engineer (Python) — Project Phoenix
 Requirements: 6+ years backend engineering; expert Python (FastAPI/Django); PostgreSQL schema design & query optimization; event-driven architectures (Kafka/RabbitMQ); Docker & Kubernetes; CI/CD; AWS. Nice to have: Terraform, gRPC, observability (Prometheus/Grafana). Role: own microservices for the client billing platform, mentor 2 juniors, drive architecture reviews."""
@@ -53,161 +51,155 @@ MOCK_TRANSCRIPT = """[00:00] Interviewer: Thanks for joining. Let's start with y
 [41:00] Interview ends."""
 
 
+def iso_in(**kw):
+    return (datetime.now(timezone.utc) + timedelta(**kw)).isoformat()
+
+
+def iso_ago(**kw):
+    return (datetime.now(timezone.utc) - timedelta(**kw)).isoformat()
+
+
 def seed():
-    Base.metadata.create_all(engine)
-    db = SessionLocal()
-    try:
-        if db.query(Project).first():
-            return False
-        phoenix = Project(name='Phoenix', client='Aurora Retail Group')
-        atlas = Project(name='Atlas', client='Northwind Logistics')
-        db.add_all([phoenix, atlas])
-        db.flush()
+    ensure_indexes()
+    if db.projects.find_one():
+        return False
 
-        dm = User(email='diana@delivery.demo', name='Diana Kessler', role='dm')
-        pm1 = User(email='priya@delivery.demo', name='Priya Nair', role='pm')
-        pm2 = User(email='pablo@delivery.demo', name='Pablo Ortiz', role='pm')
-        staff = User(email='sam@delivery.demo', name='Sam Whitfield', role='staffing')
-        db.add_all([dm, pm1, pm2, staff])
-        db.flush()
-        db.add_all([UserProjectAssignment(user_id=pm1.id, project_id=phoenix.id),
-                    UserProjectAssignment(user_id=pm2.id, project_id=atlas.id)])
+    phoenix = {'id': uid(), 'name': 'Phoenix', 'client': 'Aurora Retail Group', 'active': True}
+    atlas = {'id': uid(), 'name': 'Atlas', 'client': 'Northwind Logistics', 'active': True}
+    db.projects.insert_many([phoenix, atlas])
 
-        interviewers = [
-            Interviewer(name='Rohit Malhotra', email='rohit@panel.demo', role='Principal Engineer',
-                        skills=['python', 'fastapi', 'postgresql', 'kafka', 'kubernetes', 'aws'], seniority='principal'),
-            Interviewer(name='Lena Fischer', email='lena@panel.demo', role='Staff Engineer',
-                        skills=['python', 'django', 'postgresql', 'terraform', 'aws'], seniority='staff'),
-            Interviewer(name='Kwame Mensah', email='kwame@panel.demo', role='Engineering Manager',
-                        skills=['node.js', 'typescript', 'mongodb', 'leadership', 'aws'], seniority='manager'),
-            Interviewer(name='Yuki Tanaka', email='yuki@panel.demo', role='Senior Frontend Engineer',
-                        skills=['react', 'typescript', 'javascript', 'css'], seniority='senior'),
-            Interviewer(name='Olga Petrova', email='olga@panel.demo', role='DevOps Architect',
-                        skills=['kubernetes', 'terraform', 'aws', 'ci/cd', 'docker'], seniority='architect'),
-            Interviewer(name='Arjun Iyer', email='arjun@panel.demo', role='Tech Lead',
-                        skills=['node.js', 'nestjs', 'mongodb', 'redis', 'leadership'], seniority='lead'),
-        ]
-        db.add_all(interviewers)
-        db.flush()
+    dm = {'id': uid(), 'email': 'diana@delivery.demo', 'name': 'Diana Kessler', 'role': 'dm'}
+    pm1 = {'id': uid(), 'email': 'priya@delivery.demo', 'name': 'Priya Nair', 'role': 'pm'}
+    pm2 = {'id': uid(), 'email': 'pablo@delivery.demo', 'name': 'Pablo Ortiz', 'role': 'pm'}
+    staff = {'id': uid(), 'email': 'sam@delivery.demo', 'name': 'Sam Whitfield', 'role': 'staffing'}
+    db.users.insert_many([dm, pm1, pm2, staff])
+    db.user_project_assignments.insert_many([
+        {'user_id': pm1['id'], 'project_id': phoenix['id']},
+        {'user_id': pm2['id'], 'project_id': atlas['id']},
+    ])
 
-        # POS-101: ready for live evaluation demo
-        p101 = Position(project_id=phoenix.id, ticket_number='POS-101', title='Senior Backend Engineer (Python)',
-                        jd_text=JD_PYTHON, status='OPEN', priority='high',
-                        meta={'skills': ['python', 'fastapi', 'postgresql', 'kafka', 'kubernetes', 'aws']})
-        db.add(p101)
-        db.flush()
-        for name, email, cv in CVS_PYTHON:
-            db.add(Candidate(position_id=p101.id, name=name, email=email, cv_text=cv, source='sheets-import'))
-        record_event(db, p101.id, 'POSITION_OPENED', 'human', 'priya@delivery.demo', {'ticket': 'POS-101'})
+    interviewers = [
+        {'id': uid(), 'name': 'Rohit Malhotra', 'email': 'rohit@panel.demo', 'role': 'Principal Engineer',
+         'skills': ['python', 'fastapi', 'postgresql', 'kafka', 'kubernetes', 'aws'], 'seniority': 'principal', 'max_weekly': 5, 'active': True},
+        {'id': uid(), 'name': 'Lena Fischer', 'email': 'lena@panel.demo', 'role': 'Staff Engineer',
+         'skills': ['python', 'django', 'postgresql', 'terraform', 'aws'], 'seniority': 'staff', 'max_weekly': 5, 'active': True},
+        {'id': uid(), 'name': 'Kwame Mensah', 'email': 'kwame@panel.demo', 'role': 'Engineering Manager',
+         'skills': ['node.js', 'typescript', 'mongodb', 'leadership', 'aws'], 'seniority': 'manager', 'max_weekly': 5, 'active': True},
+        {'id': uid(), 'name': 'Yuki Tanaka', 'email': 'yuki@panel.demo', 'role': 'Senior Frontend Engineer',
+         'skills': ['react', 'typescript', 'javascript', 'css'], 'seniority': 'senior', 'max_weekly': 5, 'active': True},
+        {'id': uid(), 'name': 'Olga Petrova', 'email': 'olga@panel.demo', 'role': 'DevOps Architect',
+         'skills': ['kubernetes', 'terraform', 'aws', 'ci/cd', 'docker'], 'seniority': 'architect', 'max_weekly': 5, 'active': True},
+        {'id': uid(), 'name': 'Arjun Iyer', 'email': 'arjun@panel.demo', 'role': 'Tech Lead',
+         'skills': ['node.js', 'nestjs', 'mongodb', 'redis', 'leadership'], 'seniority': 'lead', 'max_weekly': 5, 'active': True},
+    ]
+    db.interviewers.insert_many(interviewers)
 
-        # POS-102: pending PM approval with pre-seeded evaluation
-        p102 = Position(project_id=phoenix.id, ticket_number='POS-102', title='Tech Lead (Node.js)',
-                        jd_text=JD_NODE, status='PENDING_PM_APPROVAL', priority='high',
-                        meta={'skills': ['node.js', 'nestjs', 'mongodb', 'redis', 'leadership']})
-        db.add(p102)
-        db.flush()
-        cand_ids = []
-        for name, email, cv in CVS_NODE:
-            c = Candidate(position_id=p102.id, name=name, email=email, cv_text=cv, source='sheets-import')
-            db.add(c)
-            db.flush()
-            cand_ids.append((c.id, name))
-        ranked = {
-            "schema": "RankedCandidateList.v1",
-            "candidates": [
-                {"candidate_id": cand_ids[0][0], "name": "Priyanka Shah", "rank": 1, "score": 92,
-                 "strengths": ["7y Node/TS + NestJS", "Led 3 squads", "MongoDB+Redis at scale", "Client-facing"],
-                 "gaps": ["No Go exposure"],
-                 "reasoning": "Near-perfect JD match: leadership scope, stack depth and client communication all evidenced with concrete scale numbers."},
-                {"candidate_id": cand_ids[2][0], "name": "Grace Okoye", "rank": 2, "score": 87,
-                 "strengths": ["Led storefront re-platform", "Strong stakeholder skills", "Kafka + MongoDB"],
-                 "gaps": ["Slightly less NestJS-specific depth"],
-                 "reasoning": "Proven tech lead with directly relevant retail storefront delivery; marginally behind on framework specificity."},
-                {"candidate_id": cand_ids[1][0], "name": "Tomás Silva", "rank": 3, "score": 68,
-                 "strengths": ["Deep Node performance expertise", "Mentoring"],
-                 "gaps": ["No formal team leadership", "PostgreSQL not MongoDB"],
-                 "reasoning": "Strong IC but the JD requires 3+ years leading teams, which he lacks; better fit for a senior IC role."},
-            ],
-            "summary": "Two strong lead-level candidates (Shah, Okoye); Silva recommended only as fallback senior IC."
-        }
-        ev = Evaluation(position_id=p102.id, model='gpt-4o', ranked_list=ranked,
-                        human_report="Priyanka Shah is the standout (92/100) with directly relevant squad leadership; Grace Okoye a close second (87). Tomás Silva lacks required leadership experience.",
-                        input_hash='seed-pos-102')
-        db.add(ev)
-        db.flush()
-        db.add(Approval(position_id=p102.id, evaluation_id=ev.id, status='pending'))
-        record_event(db, p102.id, 'EVALUATION_COMPLETED', 'agent', 'evaluation', {'candidates': 3})
-        record_event(db, p102.id, 'STATUS_PENDING_PM_APPROVAL', 'agent', 'orchestrator', {'from': 'EVALUATING', 'to': 'PENDING_PM_APPROVAL'})
-        notify(db, 'slack', '#recruitment-phoenix', 'POS-102 shortlist ready',
-               '[POS-102] Tech Lead (Node.js) — AI shortlist ready. @Priya Nair approval required before scheduling.',
-               key='slack:seed:pos102:approval', meta={'ticket': 'POS-102'})
+    def add_position(project, ticket, title, jd, status, priority, skills, **extra):
+        p = {'id': uid(), 'project_id': project['id'], 'ticket_number': ticket, 'title': title,
+             'jd_text': jd, 'status': status, 'priority': priority, 'opened_at': now_iso(),
+             'filled_at': extra.get('filled_at'), 'meta': {'skills': skills}}
+        db.positions.insert_one(p)
+        return p
 
-        # POS-103: invite sent, SLA already breached (demo for monitoring)
-        p103 = Position(project_id=atlas.id, ticket_number='POS-103', title='React Frontend Engineer',
-                        jd_text='React 18+, TypeScript, state management, testing library, design systems. 4+ yrs.',
-                        status='INTERVIEW_INVITE_SENT', priority='medium',
-                        meta={'skills': ['react', 'typescript', 'javascript', 'css']})
-        db.add(p103)
-        db.flush()
-        c103 = Candidate(position_id=p103.id, name='Nadia Belkacem', email='nadia.b@mail.demo',
-                         cv_text='Nadia Belkacem — Frontend Engineer, 5 yrs. React, TypeScript, Redux Toolkit, Storybook design systems, Jest/RTL, Next.js.', source='sheets-import')
-        db.add(c103)
-        db.flush()
-        iv103 = Interview(position_id=p103.id, candidate_id=c103.id, interviewer_id=interviewers[3].id,
-                          scheduled_at=now() + timedelta(days=1), meet_link='https://meet.mock/pos-103-nadia',
-                          calendar_event_id='cal-evt-mock-103', feedback_form_ref='form-103',
-                          invite_status='pending', invite_sla_deadline=now() - timedelta(minutes=35),
-                          transcript_text=MOCK_TRANSCRIPT.format(skill='React'),
-                          match_reason='Yuki Tanaka matched: 4/4 required skills (react, typescript, javascript, css), current load 0.',
-                          idempotency_key=f'sched:{p103.id}:{c103.id}:1')
-        db.add(iv103)
-        record_event(db, p103.id, 'STATUS_INTERVIEW_INVITE_SENT', 'agent', 'scheduling', {'to': 'INTERVIEW_INVITE_SENT'})
-        notify(db, 'email', 'yuki@panel.demo', 'Interview invite: Nadia Belkacem / POS-103',
-               'Fitment interview scheduled (Meet + transcription enabled). Feedback form linked. Please accept within 1 hour.',
-               key='email:seed:pos103:invite', meta={'ticket': 'POS-103'})
+    def add_candidate(p, name, email, cv):
+        c = {'id': uid(), 'position_id': p['id'], 'name': name, 'email': email,
+             'cv_text': cv, 'source': 'sheets-import', 'created_at': now_iso()}
+        db.candidates.insert_one(c)
+        return c
 
-        # POS-104: accepted, awaiting feedback (demo feedback + transcript summary)
-        p104 = Position(project_id=atlas.id, ticket_number='POS-104', title='DevOps Engineer',
-                        jd_text='Kubernetes, Terraform, AWS, CI/CD pipelines, observability. 5+ yrs.',
-                        status='INTERVIEW_ACCEPTED', priority='high',
-                        meta={'skills': ['kubernetes', 'terraform', 'aws', 'ci/cd']})
-        db.add(p104)
-        db.flush()
-        c104 = Candidate(position_id=p104.id, name='Viktor Hansen', email='viktor.h@mail.demo',
-                         cv_text='Viktor Hansen — DevOps Engineer, 7 yrs. EKS clusters, Terraform modules, GitHub Actions, Datadog, cost optimization saved 30% infra spend.', source='sheets-import')
-        db.add(c104)
-        db.flush()
-        iv104 = Interview(position_id=p104.id, candidate_id=c104.id, interviewer_id=interviewers[4].id,
-                          scheduled_at=now() - timedelta(hours=2), meet_link='https://meet.mock/pos-104-viktor',
-                          calendar_event_id='cal-evt-mock-104', feedback_form_ref='form-104',
-                          invite_status='accepted', invite_sla_deadline=now() - timedelta(days=1),
-                          transcript_text=MOCK_TRANSCRIPT.format(skill='Kubernetes and Terraform'),
-                          match_reason='Olga Petrova matched: 4/4 required skills, current load 1.',
-                          idempotency_key=f'sched:{p104.id}:{c104.id}:1')
-        db.add(iv104)
-        record_event(db, p104.id, 'INVITE_ACCEPTED', 'human', 'olga@panel.demo', {})
+    # POS-101: ready for live evaluation demo
+    p101 = add_position(phoenix, 'POS-101', 'Senior Backend Engineer (Python)', JD_PYTHON, 'OPEN', 'high',
+                        ['python', 'fastapi', 'postgresql', 'kafka', 'kubernetes', 'aws'])
+    for name, email, cv in CVS_PYTHON:
+        add_candidate(p101, name, email, cv)
+    record_event(p101['id'], 'POSITION_OPENED', 'human', 'priya@delivery.demo', {'ticket': 'POS-101'})
 
-        # POS-105: filled
-        p105 = Position(project_id=phoenix.id, ticket_number='POS-105', title='QA Automation Engineer',
-                        jd_text='Playwright/Cypress, API testing, CI integration. 3+ yrs.', status='FILLED',
-                        priority='low', filled_at=now() - timedelta(days=3), meta={'skills': ['playwright', 'testing']})
-        db.add(p105)
-        db.flush()
-        record_event(db, p105.id, 'STATUS_FILLED', 'human', 'sam@delivery.demo', {'to': 'FILLED'})
+    # POS-102: pending PM approval with pre-seeded evaluation
+    p102 = add_position(phoenix, 'POS-102', 'Tech Lead (Node.js)', JD_NODE, 'PENDING_PM_APPROVAL', 'high',
+                        ['node.js', 'nestjs', 'mongodb', 'redis', 'leadership'])
+    cands = [add_candidate(p102, n, e, cv) for n, e, cv in CVS_NODE]
+    ranked = {
+        "schema": "RankedCandidateList.v1",
+        "candidates": [
+            {"candidate_id": cands[0]['id'], "name": "Priyanka Shah", "rank": 1, "score": 92,
+             "strengths": ["7y Node/TS + NestJS", "Led 3 squads", "MongoDB+Redis at scale", "Client-facing"],
+             "gaps": ["No Go exposure"],
+             "reasoning": "Near-perfect JD match: leadership scope, stack depth and client communication all evidenced with concrete scale numbers."},
+            {"candidate_id": cands[2]['id'], "name": "Grace Okoye", "rank": 2, "score": 87,
+             "strengths": ["Led storefront re-platform", "Strong stakeholder skills", "Kafka + MongoDB"],
+             "gaps": ["Slightly less NestJS-specific depth"],
+             "reasoning": "Proven tech lead with directly relevant retail storefront delivery; marginally behind on framework specificity."},
+            {"candidate_id": cands[1]['id'], "name": "Tomás Silva", "rank": 3, "score": 68,
+             "strengths": ["Deep Node performance expertise", "Mentoring"],
+             "gaps": ["No formal team leadership", "PostgreSQL not MongoDB"],
+             "reasoning": "Strong IC but the JD requires 3+ years leading teams, which he lacks; better fit for a senior IC role."},
+        ],
+        "summary": "Two strong lead-level candidates (Shah, Okoye); Silva recommended only as fallback senior IC."
+    }
+    ev = {'id': uid(), 'position_id': p102['id'], 'model': 'gpt-4o', 'ranked_list': ranked,
+          'human_report': "Priyanka Shah is the standout (92/100) with directly relevant squad leadership; Grace Okoye a close second (87). Tomás Silva lacks required leadership experience.",
+          'input_hash': 'seed-pos-102', 'created_at': now_iso()}
+    db.evaluations.insert_one(ev)
+    db.approvals.insert_one({'id': uid(), 'position_id': p102['id'], 'evaluation_id': ev['id'],
+                             'status': 'pending', 'approved_candidate_ids': [], 'actor': None,
+                             'comment': None, 'decided_at': None, 'created_at': now_iso()})
+    record_event(p102['id'], 'EVALUATION_COMPLETED', 'agent', 'evaluation', {'candidates': 3})
+    record_event(p102['id'], 'STATUS_PENDING_PM_APPROVAL', 'agent', 'orchestrator', {'from': 'EVALUATING', 'to': 'PENDING_PM_APPROVAL'})
+    notify('slack', '#recruitment-phoenix', 'POS-102 shortlist ready',
+           '[POS-102] Tech Lead (Node.js) — AI shortlist ready. @Priya Nair approval required before scheduling.',
+           key='slack:seed:pos102:approval', meta={'ticket': 'POS-102'})
 
-        # POS-106: open, no candidates yet
-        p106 = Position(project_id=atlas.id, ticket_number='POS-106', title='Data Engineer',
-                        jd_text='Spark, Airflow, dbt, Snowflake, Python. 4+ yrs.', status='OPEN', priority='medium',
-                        meta={'skills': ['python', 'spark', 'airflow']})
-        db.add(p106)
+    # POS-103: invite sent, SLA already breached
+    p103 = add_position(atlas, 'POS-103', 'React Frontend Engineer',
+                        'React 18+, TypeScript, state management, testing library, design systems. 4+ yrs.',
+                        'INTERVIEW_INVITE_SENT', 'medium', ['react', 'typescript', 'javascript', 'css'])
+    c103 = add_candidate(p103, 'Nadia Belkacem', 'nadia.b@mail.demo',
+                         'Nadia Belkacem — Frontend Engineer, 5 yrs. React, TypeScript, Redux Toolkit, Storybook design systems, Jest/RTL, Next.js.')
+    db.interviews.insert_one({'id': uid(), 'position_id': p103['id'], 'candidate_id': c103['id'],
+                              'interviewer_id': interviewers[3]['id'], 'scheduled_at': iso_in(days=1),
+                              'meet_link': 'https://meet.mock/pos-103-nadia', 'calendar_event_id': 'cal-evt-mock-103',
+                              'feedback_form_ref': 'form-103', 'invite_status': 'pending',
+                              'invite_sla_deadline': iso_ago(minutes=35),
+                              'result': None, 'transcript_text': MOCK_TRANSCRIPT.format(skill='React'),
+                              'transcript_summary': None,
+                              'match_reason': 'Yuki Tanaka matched: 4/4 required skills (react, typescript, javascript, css), current load 0.',
+                              'idempotency_key': f"sched:{p103['id']}:{c103['id']}:1", 'created_at': now_iso()})
+    record_event(p103['id'], 'STATUS_INTERVIEW_INVITE_SENT', 'agent', 'scheduling', {'to': 'INTERVIEW_INVITE_SENT'})
+    notify('email', 'yuki@panel.demo', 'Interview invite: Nadia Belkacem / POS-103',
+           'Fitment interview scheduled (Meet + transcription enabled). Feedback form linked. Please accept within 1 hour.',
+           key='email:seed:pos103:invite', meta={'ticket': 'POS-103'})
 
-        notify(db, 'slack', '#recruitment-atlas', 'SLA warning',
-               '[POS-103] Interviewer Yuki Tanaka has not accepted the invite within SLA. Reminder queued.',
-               key='slack:seed:pos103:sla', meta={'ticket': 'POS-103'})
-        db.commit()
-        return True
-    finally:
-        db.close()
+    # POS-104: accepted, awaiting feedback
+    p104 = add_position(atlas, 'POS-104', 'DevOps Engineer',
+                        'Kubernetes, Terraform, AWS, CI/CD pipelines, observability. 5+ yrs.',
+                        'INTERVIEW_ACCEPTED', 'high', ['kubernetes', 'terraform', 'aws', 'ci/cd'])
+    c104 = add_candidate(p104, 'Viktor Hansen', 'viktor.h@mail.demo',
+                         'Viktor Hansen — DevOps Engineer, 7 yrs. EKS clusters, Terraform modules, GitHub Actions, Datadog, cost optimization saved 30% infra spend.')
+    db.interviews.insert_one({'id': uid(), 'position_id': p104['id'], 'candidate_id': c104['id'],
+                              'interviewer_id': interviewers[4]['id'], 'scheduled_at': iso_ago(hours=2),
+                              'meet_link': 'https://meet.mock/pos-104-viktor', 'calendar_event_id': 'cal-evt-mock-104',
+                              'feedback_form_ref': 'form-104', 'invite_status': 'accepted',
+                              'invite_sla_deadline': iso_ago(days=1),
+                              'result': None, 'transcript_text': MOCK_TRANSCRIPT.format(skill='Kubernetes and Terraform'),
+                              'transcript_summary': None,
+                              'match_reason': 'Olga Petrova matched: 4/4 required skills, current load 1.',
+                              'idempotency_key': f"sched:{p104['id']}:{c104['id']}:1", 'created_at': now_iso()})
+    record_event(p104['id'], 'INVITE_ACCEPTED', 'human', 'olga@panel.demo', {})
+
+    # POS-105: filled
+    p105 = add_position(phoenix, 'POS-105', 'QA Automation Engineer',
+                        'Playwright/Cypress, API testing, CI integration. 3+ yrs.', 'FILLED', 'low',
+                        ['playwright', 'testing'], filled_at=iso_ago(days=3))
+    record_event(p105['id'], 'STATUS_FILLED', 'human', 'sam@delivery.demo', {'to': 'FILLED'})
+
+    # POS-106: open, no candidates yet
+    add_position(atlas, 'POS-106', 'Data Engineer', 'Spark, Airflow, dbt, Snowflake, Python. 4+ yrs.',
+                 'OPEN', 'medium', ['python', 'spark', 'airflow'])
+
+    notify('slack', '#recruitment-atlas', 'SLA warning',
+           '[POS-103] Interviewer Yuki Tanaka has not accepted the invite within SLA. Reminder queued.',
+           key='slack:seed:pos103:sla', meta={'ticket': 'POS-103'})
+    return True
 
 
 if __name__ == '__main__':
