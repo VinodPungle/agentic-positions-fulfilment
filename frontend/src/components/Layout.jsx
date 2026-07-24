@@ -59,7 +59,7 @@ export const Layout = ({ children }) => {
           )}
         </div>
       </aside>
-      <main className="flex-1 ml-56 relative">
+      <main className="flex-1 min-w-0 ml-56 relative">
         <div className="noise-overlay" />
         <div key={`${user?.id}-${location.pathname}`} className="relative z-10">{children}</div>
       </main>
