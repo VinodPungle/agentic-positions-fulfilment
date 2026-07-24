@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { api, BOARD_COLUMNS, STATUS_META } from "../lib/api";
 import { usePersona } from "../context/PersonaContext";
 import { StatusBadge } from "../components/StatusBadge";
+import NewPositionDialog from "../components/NewPositionDialog";
 import { Users, AlertTriangle, CheckSquare, Briefcase } from "lucide-react";
 
 const Stat = ({ label, value, icon: Icon, accent, testId }) => (
@@ -20,19 +21,24 @@ export default function Dashboard() {
   const [positions, setPositions] = useState([]);
   const [summary, setSummary] = useState(null);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     if (!user) return;
     api.get("/positions").then((r) => setPositions(r.data));
     api.get("/reports/summary").then((r) => setSummary(r.data));
   }, [user?.id]);
 
+  useEffect(() => { load(); }, [load]);
+
   return (
     <div className="p-8 space-y-8">
-      <div>
-        <h1 className="font-heading font-black text-4xl sm:text-5xl tracking-tight leading-none">Pipeline</h1>
-        <p className="font-mono text-xs text-white/40 mt-2 tracking-[0.15em]">
-          {user?.role === "pm" ? `SCOPED TO ${user.projects.join(", ").toUpperCase()}` : "ACCOUNT-WIDE VIEW"} · {positions.length} POSITIONS
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="font-heading font-black text-4xl sm:text-5xl tracking-tight leading-none">Pipeline</h1>
+          <p className="font-mono text-xs text-white/40 mt-2 tracking-[0.15em]">
+            {user?.role === "pm" ? `SCOPED TO ${user.projects.join(", ").toUpperCase()}` : "ACCOUNT-WIDE VIEW"} · {positions.length} POSITIONS
+          </p>
+        </div>
+        <NewPositionDialog onCreated={load} />
       </div>
 
       {summary && (

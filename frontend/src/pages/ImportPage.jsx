@@ -56,6 +56,8 @@ export default function ImportPage() {
           columns="ticket_number, title, project, priority, status, skills (semicolon-separated), jd_text" />
         <ImportCard title="Interviewer panel roster" endpoint="/import/interviewers" testId="import-interviewers"
           columns="name, email, role, skills (semicolon-separated), seniority" />
+        <ImportCard title="Candidate CVs (CSV)" endpoint="/import/candidates" testId="import-candidates"
+          columns="ticket_number, name, email, cv_text — upserts by (ticket + email or name)" />
       </div>
       <div className="border border-white/15 bg-[#121212] p-6">
         <p className="font-mono text-[10px] tracking-[0.2em] text-white/40 uppercase mb-3">Migration protocol</p>

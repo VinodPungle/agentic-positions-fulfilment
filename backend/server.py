@@ -3,13 +3,15 @@ import csv
 import json
 import hashlib
 import logging
+import asyncio
 from datetime import datetime, timezone, timedelta
-from fastapi import FastAPI, APIRouter, HTTPException, Request, UploadFile, File
+from fastapi import FastAPI, APIRouter, HTTPException, Request, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
 import os
+import re
 
 from db import db, uid, now_iso, ensure_indexes, NO_ID
 from pipeline import record_event, notify, set_status, get_or_create_task, update_task
@@ -97,6 +99,70 @@ def iv_dict(iv: dict):
 @api.get("/")
 async def root():
     return {"service": "recruitment-pipeline", "db": "mongodb"}
+
+
+# ---------- file parsing (PDF / DOCX / TXT) ----------
+def parse_file_bytes(filename: str, data: bytes) -> str:
+    name = (filename or '').lower()
+    if name.endswith('.pdf'):
+        try:
+            from pypdf import PdfReader
+        except Exception as e:
+            raise HTTPException(500, f'pypdf not installed: {e}')
+        try:
+            reader = PdfReader(io.BytesIO(data))
+            return "\n".join((p.extract_text() or '') for p in reader.pages).strip()
+        except Exception as e:
+            raise HTTPException(400, f'failed to parse PDF: {e}')
+    if name.endswith('.docx'):
+        try:
+            from docx import Document
+        except Exception as e:
+            raise HTTPException(500, f'python-docx not installed: {e}')
+        try:
+            doc = Document(io.BytesIO(data))
+            return "\n".join(p.text for p in doc.paragraphs).strip()
+        except Exception as e:
+            raise HTTPException(400, f'failed to parse DOCX: {e}')
+    if name.endswith('.doc'):
+        raise HTTPException(400, 'legacy .doc not supported — please save as .docx or .pdf')
+    # fallback: treat as text
+    try:
+        return data.decode('utf-8-sig', errors='replace').strip()
+    except Exception as e:
+        raise HTTPException(400, f'unreadable text file: {e}')
+
+
+@api.post("/parse/file")
+async def parse_file(file: UploadFile = File(...)):
+    data = await file.read()
+    if len(data) > 10 * 1024 * 1024:
+        raise HTTPException(413, 'file too large (max 10MB)')
+    text = parse_file_bytes(file.filename, data)
+    return {'filename': file.filename, 'chars': len(text), 'text': text}
+
+
+EMAIL_RE = re.compile(r'[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}')
+
+
+async def extract_name_email(cv_text: str, fallback_name: str = '') -> dict:
+    """Ask the LLM for a candidate name + email from CV text. Falls back to regex/filename if LLM fails."""
+    snippet = cv_text[:3000]
+    email_guess = None
+    m = EMAIL_RE.search(cv_text)
+    if m:
+        email_guess = m.group(0)
+    try:
+        raw = await llm.complete(
+            "You extract candidate identity from CV text. Output STRICT JSON only, no fences.",
+            f"CV:\n{snippet}\n\nReturn JSON: {{\"name\":\"Full Name or empty\",\"email\":\"email or empty\"}}"
+        )
+        data = llm.extract_json(raw)
+        name = (data.get('name') or '').strip()
+        email = (data.get('email') or '').strip() or (email_guess or '')
+        return {'name': name or fallback_name, 'email': email}
+    except Exception:
+        return {'name': fallback_name, 'email': email_guess or ''}
 
 
 @api.get("/users")
@@ -205,6 +271,90 @@ def patch_status(pid: str, body: StatusPatch, request: Request):
         raise HTTPException(404, 'position not found in your scope')
     set_status(p, body.status, 'human', user['email'], 'manual override')
     return pos_dict(p)
+
+
+class JDPatch(BaseModel):
+    jd_text: str
+    skills: Optional[List[str]] = None
+
+
+@api.patch("/positions/{pid}/jd")
+def patch_jd(pid: str, body: JDPatch, request: Request):
+    user = current_user(request)
+    p = db.positions.find_one({'id': pid}, NO_ID)
+    if not p or not pos_in_scope(user, p):
+        raise HTTPException(404, 'position not found in your scope')
+    update = {'jd_text': body.jd_text}
+    if body.skills is not None:
+        update['meta'] = {**(p.get('meta') or {}), 'skills': body.skills}
+    db.positions.update_one({'id': pid}, {'$set': update})
+    record_event(pid, 'JD_UPDATED', 'human', user['email'], {'chars': len(body.jd_text)})
+    return pos_dict({**p, **update})
+
+
+@api.post("/positions/{pid}/candidates/bulk")
+async def bulk_upload_cvs(pid: str, request: Request, files: List[UploadFile] = File(...)):
+    user = current_user(request)
+    p = db.positions.find_one({'id': pid}, NO_ID)
+    if not p or not pos_in_scope(user, p):
+        raise HTTPException(404, 'position not found in your scope')
+    created, errors = [], []
+    # parse all files first (sync), then LLM-extract in parallel
+    parsed = []
+    for f in files:
+        try:
+            data = await f.read()
+            if len(data) > 10 * 1024 * 1024:
+                errors.append(f'{f.filename}: too large (max 10MB)')
+                continue
+            text = parse_file_bytes(f.filename, data)
+            if not text.strip():
+                errors.append(f'{f.filename}: no text extracted')
+                continue
+            base = os.path.splitext(os.path.basename(f.filename))[0].replace('_', ' ').replace('-', ' ').strip()
+            parsed.append({'filename': f.filename, 'text': text, 'fallback_name': base})
+        except HTTPException as e:
+            errors.append(f'{f.filename}: {e.detail}')
+        except Exception as e:
+            errors.append(f'{f.filename}: {e}')
+
+    # concurrent LLM extraction
+    async def _extract(item):
+        info = await extract_name_email(item['text'], item['fallback_name'])
+        return {**item, **info}
+
+    if parsed:
+        results = await asyncio.gather(*(_extract(it) for it in parsed))
+    else:
+        results = []
+
+    for r in results:
+        try:
+            # skip exact duplicate (same email or same name on same position)
+            existing = None
+            if r.get('email'):
+                existing = db.candidates.find_one({'position_id': pid, 'email': r['email']}, NO_ID)
+            if not existing and r.get('name'):
+                existing = db.candidates.find_one({'position_id': pid, 'name': r['name']}, NO_ID)
+            if existing:
+                errors.append(f"{r['filename']}: candidate already exists ({r.get('name') or r.get('email')})")
+                continue
+            c = {
+                'id': uid(),
+                'position_id': pid,
+                'name': r.get('name') or 'Unknown',
+                'email': r.get('email') or '',
+                'cv_text': r['text'],
+                'source': f"upload:{r['filename']}",
+                'created_at': now_iso(),
+            }
+            db.candidates.insert_one(c)
+            record_event(pid, 'CANDIDATE_ADDED', 'human', user['email'], {'name': c['name'], 'source': c['source']})
+            created.append({'id': c['id'], 'name': c['name'], 'email': c['email'], 'filename': r['filename']})
+        except Exception as e:
+            errors.append(f"{r.get('filename', '?')}: {e}")
+
+    return {'created': created, 'errors': errors, 'count': len(created)}
 
 
 # ---------- evaluation ----------
@@ -685,6 +835,60 @@ async def import_interviewers(request: Request, file: UploadFile = File(...)):
                 db.interviewers.insert_one({'id': uid(), 'name': row.get('name') or email, 'email': email,
                                             'role': row.get('role') or '', 'skills': skills,
                                             'seniority': row.get('seniority') or '', 'max_weekly': 5, 'active': True})
+                created += 1
+        except Exception as e:
+            errors.append(f'row {i}: {e}')
+    return {'created': created, 'updated': updated, 'errors': errors}
+
+
+@api.post("/import/candidates")
+async def import_candidates(request: Request, file: UploadFile = File(...)):
+    user = current_user(request)
+    content = (await file.read()).decode('utf-8-sig')
+    reader = csv.DictReader(io.StringIO(content))
+    created, updated, errors = 0, 0, []
+    for i, row in enumerate(reader, 2):
+        try:
+            ticket = (row.get('ticket_number') or '').strip()
+            name = (row.get('name') or '').strip()
+            cv_text = (row.get('cv_text') or '').strip()
+            email = (row.get('email') or '').strip()
+            if not ticket:
+                errors.append(f'row {i}: missing ticket_number')
+                continue
+            if not name and not email:
+                errors.append(f'row {i}: need at least name or email')
+                continue
+            if not cv_text:
+                errors.append(f'row {i}: missing cv_text')
+                continue
+            p = db.positions.find_one({'ticket_number': ticket}, NO_ID)
+            if not p:
+                errors.append(f'row {i}: no position with ticket {ticket}')
+                continue
+            if not pos_in_scope(user, p):
+                errors.append(f'row {i}: {ticket} outside your scope')
+                continue
+            existing = None
+            if email:
+                existing = db.candidates.find_one({'position_id': p['id'], 'email': email}, NO_ID)
+            if not existing and name:
+                existing = db.candidates.find_one({'position_id': p['id'], 'name': name}, NO_ID)
+            if existing:
+                update = {'cv_text': cv_text}
+                if name:
+                    update['name'] = name
+                if email:
+                    update['email'] = email
+                db.candidates.update_one({'id': existing['id']}, {'$set': update})
+                updated += 1
+            else:
+                c = {'id': uid(), 'position_id': p['id'], 'name': name or email,
+                     'email': email, 'cv_text': cv_text, 'source': f'csv:{file.filename}',
+                     'created_at': now_iso()}
+                db.candidates.insert_one(c)
+                record_event(p['id'], 'CANDIDATE_ADDED', 'human', user['email'],
+                             {'name': c['name'], 'source': c['source']})
                 created += 1
         except Exception as e:
             errors.append(f'row {i}: {e}')

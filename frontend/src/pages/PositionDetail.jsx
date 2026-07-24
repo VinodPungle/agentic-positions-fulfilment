@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, Link } from "react-router-dom";
 import { api } from "../lib/api";
 import { usePersona } from "../context/PersonaContext";
@@ -10,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "../components/ui/dialog";
 import { Checkbox } from "../components/ui/checkbox";
 import { toast } from "sonner";
-import { ArrowLeft, Sparkles, CalendarPlus, Loader2, UserPlus } from "lucide-react";
+import { ArrowLeft, Sparkles, CalendarPlus, Loader2, UserPlus, Upload, FileText, Pencil, FilePlus2 } from "lucide-react";
 
 export default function PositionDetail() {
   const { id } = useParams();
@@ -22,6 +22,15 @@ export default function PositionDetail() {
   const [selected, setSelected] = useState({});
   const [newCand, setNewCand] = useState({ name: "", email: "", cv_text: "" });
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [jdEditOpen, setJdEditOpen] = useState(false);
+  const [jdDraft, setJdDraft] = useState("");
+  const [jdSkillsDraft, setJdSkillsDraft] = useState("");
+  const [jdBusy, setJdBusy] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkResult, setBulkResult] = useState(null);
+  const bulkInputRef = useRef(null);
+  const cvInputRef = useRef(null);
+  const [cvParsing, setCvParsing] = useState(false);
 
   const load = useCallback(() => {
     api.get(`/positions/${id}`).then((r) => {
@@ -83,6 +92,73 @@ export default function PositionDetail() {
       setNewCand({ name: "", email: "", cv_text: "" });
       load();
     } catch (e) { toast.error(e.response?.data?.detail || e.message); }
+  };
+
+  const parseCvIntoDialog = async (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setCvParsing(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", f);
+      const r = await api.post("/parse/file", fd, { headers: { "Content-Type": "multipart/form-data" } });
+      setNewCand((prev) => ({ ...prev, cv_text: r.data.text }));
+      toast.success(`Parsed ${r.data.chars.toLocaleString()} chars from ${f.name}`);
+    } catch (err) { toast.error(err.response?.data?.detail || err.message); }
+    setCvParsing(false);
+    if (cvInputRef.current) cvInputRef.current.value = "";
+  };
+
+  const openJdEdit = () => {
+    setJdDraft(pos.jd_text || "");
+    setJdSkillsDraft((pos.meta?.skills || []).join(", "));
+    setJdEditOpen(true);
+  };
+
+  const parseJdIntoEditor = async (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setJdBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", f);
+      const r = await api.post("/parse/file", fd, { headers: { "Content-Type": "multipart/form-data" } });
+      setJdDraft(r.data.text);
+      toast.success(`Parsed ${r.data.chars.toLocaleString()} chars from ${f.name}`);
+    } catch (err) { toast.error(err.response?.data?.detail || err.message); }
+    setJdBusy(false);
+  };
+
+  const saveJd = async () => {
+    setJdBusy(true);
+    try {
+      const skills = jdSkillsDraft.split(",").map((s) => s.trim()).filter(Boolean);
+      await api.patch(`/positions/${id}/jd`, { jd_text: jdDraft, skills });
+      toast.success("Job description updated");
+      setJdEditOpen(false);
+      load();
+    } catch (e) { toast.error(e.response?.data?.detail || e.message); }
+    setJdBusy(false);
+  };
+
+  const bulkUpload = async (fileList) => {
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+    setBulkBusy(true);
+    setBulkResult(null);
+    try {
+      const fd = new FormData();
+      files.forEach((f) => fd.append("files", f));
+      const r = await api.post(`/positions/${id}/candidates/bulk`, fd, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      setBulkResult(r.data);
+      if (r.data.count) toast.success(`${r.data.count} candidate(s) added from ${files.length} file(s)`);
+      else toast.info("No new candidates created — check errors below");
+      load();
+    } catch (e) { toast.error(e.response?.data?.detail || e.message); }
+    setBulkBusy(false);
+    if (bulkInputRef.current) bulkInputRef.current.value = "";
   };
 
   const ranked = pos.evaluation?.ranked_list?.candidates || [];
@@ -187,22 +263,67 @@ export default function PositionDetail() {
         </TabsContent>
 
         <TabsContent value="candidates" className="mt-4 space-y-4">
-          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-            <DialogTrigger asChild>
-              <Button variant="outline" data-testid="add-candidate-button" className="border-white/20 rounded-sm hover:bg-white/5"><UserPlus size={14} className="mr-2" />Add candidate</Button>
-            </DialogTrigger>
-            <DialogContent className="bg-[#121212] border-white/20 text-white">
-              <DialogHeader><DialogTitle className="font-heading">Add candidate</DialogTitle></DialogHeader>
-              <Input placeholder="Name" value={newCand.name} data-testid="candidate-name-input" onChange={(e) => setNewCand({ ...newCand, name: e.target.value })} className="bg-black border-white/20 rounded-sm" />
-              <Input placeholder="Email" value={newCand.email} data-testid="candidate-email-input" onChange={(e) => setNewCand({ ...newCand, email: e.target.value })} className="bg-black border-white/20 rounded-sm" />
-              <Textarea placeholder="Paste CV text…" rows={8} value={newCand.cv_text} data-testid="candidate-cv-input" onChange={(e) => setNewCand({ ...newCand, cv_text: e.target.value })} className="bg-black border-white/20 rounded-sm font-mono text-xs" />
-              <Button onClick={addCandidate} disabled={!newCand.name || !newCand.cv_text} data-testid="save-candidate-button" className="bg-[#007AFF] rounded-sm">Save</Button>
-            </DialogContent>
-          </Dialog>
+          <div className="flex flex-wrap gap-2 items-center">
+            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+              <DialogTrigger asChild>
+                <Button variant="outline" data-testid="add-candidate-button" className="border-white/20 rounded-sm hover:bg-white/5"><UserPlus size={14} className="mr-2" />Add candidate</Button>
+              </DialogTrigger>
+              <DialogContent className="bg-[#121212] border-white/20 text-white">
+                <DialogHeader><DialogTitle className="font-heading">Add candidate</DialogTitle></DialogHeader>
+                <Input placeholder="Name" value={newCand.name} data-testid="candidate-name-input" onChange={(e) => setNewCand({ ...newCand, name: e.target.value })} className="bg-black border-white/20 rounded-sm" />
+                <Input placeholder="Email" value={newCand.email} data-testid="candidate-email-input" onChange={(e) => setNewCand({ ...newCand, email: e.target.value })} className="bg-black border-white/20 rounded-sm" />
+                <div className="flex items-center justify-between">
+                  <span className="font-mono text-[10px] tracking-[0.2em] uppercase text-white/50">CV text</span>
+                  <label className={`inline-flex items-center gap-2 border border-white/20 px-3 py-1.5 cursor-pointer hover:bg-white/5 font-mono text-[10px] uppercase tracking-[0.15em] ${cvParsing ? "opacity-60 pointer-events-none" : ""}`}>
+                    {cvParsing ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
+                    {cvParsing ? "parsing…" : "upload PDF/DOCX"}
+                    <input ref={cvInputRef} type="file" accept=".pdf,.docx,.txt" onChange={parseCvIntoDialog} className="hidden" data-testid="add-cand-file-input" />
+                  </label>
+                </div>
+                <Textarea placeholder="Paste CV text…" rows={8} value={newCand.cv_text} data-testid="candidate-cv-input" onChange={(e) => setNewCand({ ...newCand, cv_text: e.target.value })} className="bg-black border-white/20 rounded-sm font-mono text-xs" />
+                <Button onClick={addCandidate} disabled={!newCand.name || !newCand.cv_text} data-testid="save-candidate-button" className="bg-[#007AFF] rounded-sm">Save</Button>
+              </DialogContent>
+            </Dialog>
+
+            <label
+              data-testid="bulk-cv-upload-label"
+              className={`inline-flex items-center gap-2 border border-[#007AFF]/50 text-[#007AFF] px-4 py-2 cursor-pointer hover:bg-[#007AFF]/10 font-mono text-xs uppercase tracking-[0.15em] rounded-sm ${bulkBusy ? "opacity-60 pointer-events-none" : ""}`}
+            >
+              {bulkBusy ? <Loader2 size={14} className="animate-spin" /> : <FilePlus2 size={14} />}
+              {bulkBusy ? "processing…" : "Bulk upload CVs"}
+              <input
+                ref={bulkInputRef}
+                type="file"
+                data-testid="bulk-cv-input"
+                accept=".pdf,.docx,.txt"
+                multiple
+                onChange={(e) => bulkUpload(e.target.files)}
+                className="hidden"
+              />
+            </label>
+            <span className="font-mono text-[10px] text-white/40">Drop multiple PDF / DOCX / TXT — LLM extracts name + email per file</span>
+          </div>
+
+          {bulkResult && (
+            <div className="border border-white/15 bg-[#0A0A0A] p-4 space-y-2" data-testid="bulk-cv-result">
+              <p className="font-mono text-[10px] tracking-[0.2em] uppercase text-white/50">Bulk upload result</p>
+              <p className="font-mono text-xs text-[#32D74B]">✓ {bulkResult.count} candidate(s) added</p>
+              {bulkResult.created?.map((c) => (
+                <p key={c.id} className="font-mono text-[11px] text-white/60">— {c.name} {c.email ? `<${c.email}>` : ""} <span className="text-white/30">({c.filename})</span></p>
+              ))}
+              {(bulkResult.errors || []).map((e, i) => (
+                <p key={i} className="font-mono text-[11px] text-[#FF3B30]">✗ {e}</p>
+              ))}
+            </div>
+          )}
+
           {pos.candidates.map((c) => (
             <div key={c.id} className="border border-white/15 bg-[#121212] p-5" data-testid={`candidate-row-${c.name.split(" ")[0].toLowerCase()}`}>
               <div className="flex items-center justify-between">
-                <span className="font-semibold">{c.name}</span>
+                <div>
+                  <span className="font-semibold">{c.name}</span>
+                  {c.email && <span className="font-mono text-[11px] text-white/40 ml-3">{c.email}</span>}
+                </div>
                 <span className="font-mono text-[10px] text-white/40">{c.source}</span>
               </div>
               <p className="font-mono text-xs text-white/50 mt-2 whitespace-pre-wrap leading-relaxed">{c.cv_text}</p>
@@ -242,9 +363,67 @@ export default function PositionDetail() {
         </TabsContent>
 
         <TabsContent value="jd" className="mt-4">
-          <div className="border border-white/15 bg-[#121212] p-6">
-            <p className="font-mono text-xs text-white/70 whitespace-pre-wrap leading-relaxed">{pos.jd_text || "// no JD attached"}</p>
+          <div className="border border-white/15 bg-[#121212] p-6 space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="font-mono text-[10px] tracking-[0.2em] uppercase text-white/50">Job description</p>
+              <Button
+                variant="outline"
+                onClick={openJdEdit}
+                data-testid="edit-jd-button"
+                className="border-white/20 hover:bg-white/5 rounded-sm h-8"
+              >
+                <Pencil size={12} className="mr-2" />
+                {pos.jd_text ? "Edit JD" : "Add JD"}
+              </Button>
+            </div>
+            <p className="font-mono text-xs text-white/70 whitespace-pre-wrap leading-relaxed">
+              {pos.jd_text || "// no JD attached — click Add JD to paste or upload"}
+            </p>
           </div>
+
+          <Dialog open={jdEditOpen} onOpenChange={setJdEditOpen}>
+            <DialogContent className="bg-[#0D0D0D] border-white/20 text-white max-w-2xl max-h-[90vh] overflow-y-auto" data-testid="edit-jd-dialog">
+              <DialogHeader>
+                <DialogTitle className="font-heading font-black text-2xl tracking-tight">Edit job description</DialogTitle>
+              </DialogHeader>
+              <div className="flex items-center justify-between gap-3 mt-2">
+                <div className="flex items-center gap-2">
+                  <FileText size={14} className="text-[#007AFF]" />
+                  <span className="font-mono text-[10px] tracking-[0.2em] uppercase text-white/60">Paste or upload</span>
+                </div>
+                <label className={`inline-flex items-center gap-2 border border-white/20 px-3 py-1.5 cursor-pointer hover:bg-white/5 font-mono text-[10px] uppercase tracking-[0.15em] ${jdBusy ? "opacity-60 pointer-events-none" : ""}`}>
+                  {jdBusy ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
+                  {jdBusy ? "parsing…" : "upload PDF / DOCX"}
+                  <input type="file" accept=".pdf,.docx,.txt,.md" onChange={parseJdIntoEditor} className="hidden" data-testid="edit-jd-file-input" />
+                </label>
+              </div>
+              <Textarea
+                data-testid="edit-jd-textarea"
+                rows={14}
+                value={jdDraft}
+                onChange={(e) => setJdDraft(e.target.value)}
+                placeholder="Paste JD text…"
+                className="bg-black border-white/20 rounded-sm font-mono text-xs leading-relaxed mt-3"
+              />
+              <div className="mt-3 space-y-1">
+                <label className="font-mono text-[10px] tracking-[0.2em] uppercase text-white/50">Skills (comma-separated)</label>
+                <Input
+                  data-testid="edit-jd-skills-input"
+                  value={jdSkillsDraft}
+                  onChange={(e) => setJdSkillsDraft(e.target.value)}
+                  placeholder="Python, FastAPI, PostgreSQL"
+                  className="bg-black border-white/20 rounded-sm font-mono text-xs"
+                />
+              </div>
+              <div className="flex justify-end gap-2 mt-4">
+                <Button variant="outline" onClick={() => setJdEditOpen(false)} className="border-white/20 rounded-sm hover:bg-white/5">Cancel</Button>
+                <Button onClick={saveJd} disabled={jdBusy} data-testid="save-jd-button" className="bg-[#007AFF] hover:bg-[#0063CC] rounded-sm">
+                  {jdBusy ? <Loader2 size={14} className="animate-spin mr-2" /> : null}
+                  Save JD
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
         </TabsContent>
       </Tabs>
     </div>
