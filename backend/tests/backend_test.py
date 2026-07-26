@@ -8,9 +8,7 @@ may take 15-40s each -- generous timeouts applied. Idempotency semantics are ass
 where they are advertised in the API (evaluate reused, respond idempotent, sweep re-run,
 report re-send).
 """
-import io
 import os
-import time
 import pytest
 import requests
 

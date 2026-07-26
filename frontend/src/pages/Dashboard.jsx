@@ -25,7 +25,11 @@ export default function Dashboard() {
     if (!user) return;
     api.get("/positions").then((r) => setPositions(r.data));
     api.get("/reports/summary").then((r) => setSummary(r.data));
-  }, [user?.id]);
+    // Depend on the actual value read in the body (`user`), not just `user.id` —
+    // PersonaContext only creates a new `user` reference when the persona actually
+    // switches, so this doesn't cause extra re-runs, and it's what exhaustive-deps
+    // (correctly) wants to guarantee this always sees the current persona.
+  }, [user]);
 
   useEffect(() => { load(); }, [load]);
 

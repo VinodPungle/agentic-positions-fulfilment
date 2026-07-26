@@ -1,0 +1,11 @@
+[flake8]
+# 200, not the usual 79/88/120, to match this codebase's existing dense dict-literal
+# style rather than forcing a disruptive mass-reformat of pre-existing code as a
+# side effect of adding a lint gate. New code should still aim to stay well under this.
+max-line-length = 200
+exclude = .git,__pycache__,build,dist,.venv,venv
+per-file-ignores =
+    # Seed/demo JD text are long single-line string literals — a line-length rule
+    # can't be satisfied without corrupting the string content, so this file is
+    # exempted rather than silencing E501 project-wide.
+    seed.py:E501

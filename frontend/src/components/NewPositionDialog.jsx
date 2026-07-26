@@ -29,8 +29,14 @@ export default function NewPositionDialog({ onCreated, trigger }) {
     if (open) {
       api.get("/projects").then((r) => {
         setProjects(r.data);
-        if (r.data.length && !form.project_id) setForm((f) => ({ ...f, project_id: r.data[0].id }));
-      }).catch(() => {});
+        // Read/write the latest form state via the functional updater instead of
+        // depending on `form.project_id` directly — that would re-run this effect
+        // (and re-fetch /projects) every time the user picks a different project,
+        // not just when the dialog opens.
+        setForm((f) => (r.data.length && !f.project_id ? { ...f, project_id: r.data[0].id } : f));
+      }).catch(() => {
+        // Already logged by the axios response interceptor in lib/api.js.
+      });
     }
   }, [open]);
 
