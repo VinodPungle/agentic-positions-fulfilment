@@ -1,0 +1,32 @@
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - mongo_data:/data/db
+    # Not published to the host — only the `app` container needs to reach it, over the
+    # internal compose network. Avoids clashing with any MongoDB already running locally.
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    environment:
+      # Falls back to the local `mongo` service above when MONGO_URL is unset, so the
+      # stack runs out of the box; set MONGO_URL in .env to point at a real cluster instead.
+      MONGO_URL: ${MONGO_URL:-mongodb://mongo:27017}
+      DB_NAME: ${DB_NAME:-recruitment_pipeline}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      EVAL_MODEL: ${EVAL_MODEL:-gpt-4o}
+      CHAT_MODEL: ${CHAT_MODEL:-gpt-4o-mini}
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      APPLICATIONINSIGHTS_CONNECTION_STRING: ${APPLICATIONINSIGHTS_CONNECTION_STRING:-}
+    depends_on:
+      - mongo
+
+volumes:
+  mongo_data:
