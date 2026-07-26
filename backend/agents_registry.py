@@ -1,3 +1,8 @@
+# These "agents" are prompt/metadata definitions only — not separate services or
+# processes. Each key here is a chat persona: `system` becomes the LLM system prompt
+# (server.py appends the caller's scoped data snapshot to it at request time — see
+# build_snapshot), and the rest is just display metadata for the A2A-style agent
+# cards (GET /api/agents/{key}/card) and the frontend's agent picker.
 AGENTS = {
     "orchestrator": {
         "name": "Orchestrator",

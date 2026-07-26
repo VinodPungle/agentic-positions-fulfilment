@@ -9,6 +9,19 @@ api.interceptors.request.use((cfg) => {
   if (id) cfg.headers["X-User-Id"] = id;
   return cfg;
 });
+// Log failed requests with method/URL/status only — never the request/response body,
+// which routinely carries candidate CVs, JD text, or other sensitive fields.
+api.interceptors.response.use(
+  (res) => res,
+  (err) => {
+    const method = err.config?.method?.toUpperCase();
+    const url = err.config?.url;
+    const status = err.response?.status;
+    // eslint-disable-next-line no-console
+    console.error(`API request failed: ${method} ${url} -> ${status ?? "network error"}`);
+    return Promise.reject(err);
+  },
+);
 
 export async function streamChat(agentKey, message, onDelta) {
   const personaId = localStorage.getItem("personaId");

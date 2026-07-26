@@ -4,26 +4,61 @@ import json
 import hashlib
 import logging
 import asyncio
+import time
 from datetime import datetime, timezone, timedelta
-from fastapi import FastAPI, APIRouter, HTTPException, Request, UploadFile, File, Form
+from fastapi import FastAPI, APIRouter, HTTPException, Request, UploadFile, File
 from fastapi.responses import StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
 import os
 import re
+from openai import OpenAIError
+from pymongo.errors import PyMongoError
 
-from db import db, uid, now_iso, ensure_indexes, NO_ID
+from logging_setup import configure_logging, instrument_app, request_id_var, new_request_id
+from db import db, uid, now_iso, NO_ID
 from pipeline import record_event, notify, set_status, get_or_create_task, update_task
 from agents_registry import AGENTS, agent_card
 import llm
 import seed as seeder
 
-logging.basicConfig(level=logging.INFO)
+configure_logging()
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Recruitment Pipeline A2A")
 api = APIRouter(prefix="/api")
+
+
+@app.middleware("http")
+async def request_context_middleware(request: Request, call_next):
+    """Assigns a request ID (reusing an inbound X-Request-Id if present, e.g. from a
+    load balancer) so every log line emitted while handling this request can be tied
+    back to it, and logs a single start/end line per request with method/path/status/
+    duration — the "meaningful context without a dedicated APM trace per call" layer."""
+    req_id = request.headers.get('X-Request-Id') or new_request_id()
+    token = request_id_var.set(req_id)
+    start = time.monotonic()
+    logger.info('Request started: %s %s', request.method, request.url.path)
+    try:
+        try:
+            response = await call_next(request)
+        except Exception:
+            # Anything that escapes every route handler's own error handling still gets
+            # logged here with full context before FastAPI's default 500 response fires —
+            # otherwise unhandled exceptions in a route would never reach our logs at all.
+            duration_ms = (time.monotonic() - start) * 1000
+            logger.exception('Request failed: %s %s (%.1fms)', request.method, request.url.path, duration_ms)
+            raise
+        duration_ms = (time.monotonic() - start) * 1000
+        response.headers['X-Request-Id'] = req_id
+        logger.info('Request completed: %s %s -> %d (%.1fms)',
+                    request.method, request.url.path, response.status_code, duration_ms)
+        return response
+    finally:
+        # Reset after logging so the completion/failure lines above still carry this
+        # request's ID; must still run even on exception, hence the outer try/finally.
+        request_id_var.reset(token)
 
 MOCK_TRANSCRIPT_TPL = seeder.MOCK_TRANSCRIPT
 
@@ -34,6 +69,9 @@ def iso_in(**kw):
 
 # ---------- auth/scope helpers ----------
 def current_user(request: Request) -> dict:
+    # No real authentication: X-User-Id is a persona switcher set by the frontend
+    # from localStorage (see PersonaContext.js). Falls back to the DM (broadest
+    # account-wide scope) so the app is usable even without a header set.
     user_id = request.headers.get('X-User-Id')
     user = db.users.find_one({'id': user_id}, NO_ID) if user_id else None
     if not user:
@@ -44,6 +82,9 @@ def current_user(request: Request) -> dict:
 
 
 def scope_project_ids(user: dict) -> Optional[List[str]]:
+    # None is a deliberate sentinel meaning "account-wide, no project filter" (DM,
+    # staffing, tech_architect, admin). Only PMs get an actual list of project IDs,
+    # scoped to their assignments — every caller below must handle both cases.
     if user['role'] != 'pm':
         return None  # account-wide
     return [r['project_id'] for r in db.user_project_assignments.find({'user_id': user['id']}, NO_ID)]
@@ -107,30 +148,39 @@ def parse_file_bytes(filename: str, data: bytes) -> str:
     if name.endswith('.pdf'):
         try:
             from pypdf import PdfReader
-        except Exception as e:
-            raise HTTPException(500, f'pypdf not installed: {e}')
+        except ImportError:
+            logger.critical('pypdf not installed — PDF parsing is unavailable', exc_info=True)
+            raise HTTPException(500, 'pypdf not installed')
         try:
             reader = PdfReader(io.BytesIO(data))
             return "\n".join((p.extract_text() or '') for p in reader.pages).strip()
-        except Exception as e:
-            raise HTTPException(400, f'failed to parse PDF: {e}')
+        except Exception:
+            # pypdf doesn't guarantee a specific exception type for malformed PDFs
+            # (varies by corruption mode), so this boundary catch is intentional —
+            # any failure here becomes a clean 400, but only after being logged.
+            logger.warning('Failed to parse PDF: filename=%s', filename, exc_info=True)
+            raise HTTPException(400, 'failed to parse PDF — the file may be corrupted or password-protected')
     if name.endswith('.docx'):
         try:
             from docx import Document
-        except Exception as e:
-            raise HTTPException(500, f'python-docx not installed: {e}')
+        except ImportError:
+            logger.critical('python-docx not installed — DOCX parsing is unavailable', exc_info=True)
+            raise HTTPException(500, 'python-docx not installed')
         try:
             doc = Document(io.BytesIO(data))
             return "\n".join(p.text for p in doc.paragraphs).strip()
-        except Exception as e:
-            raise HTTPException(400, f'failed to parse DOCX: {e}')
+        except Exception:
+            logger.warning('Failed to parse DOCX: filename=%s', filename, exc_info=True)
+            raise HTTPException(400, 'failed to parse DOCX — the file may be corrupted')
     if name.endswith('.doc'):
         raise HTTPException(400, 'legacy .doc not supported — please save as .docx or .pdf')
-    # fallback: treat as text
+    # fallback: treat as text. errors='replace' means this practically never raises,
+    # but we keep the boundary in case a future codec change makes it fallible again.
     try:
         return data.decode('utf-8-sig', errors='replace').strip()
-    except Exception as e:
-        raise HTTPException(400, f'unreadable text file: {e}')
+    except UnicodeError:
+        logger.warning('Failed to decode file as text: filename=%s', filename, exc_info=True)
+        raise HTTPException(400, 'unreadable text file')
 
 
 @api.post("/parse/file")
@@ -161,8 +211,15 @@ async def extract_name_email(cv_text: str, fallback_name: str = '') -> dict:
         name = (data.get('name') or '').strip()
         email = (data.get('email') or '').strip() or (email_guess or '')
         return {'name': name or fallback_name, 'email': email}
-    except Exception:
-        return {'name': fallback_name, 'email': email_guess or ''}
+    except OpenAIError:
+        # Non-critical: identity extraction is a UX nicety, regex/filename fallback
+        # is an acceptable degrade. Still logged so a spike in LLM failures is visible.
+        logger.warning('LLM identity extraction call failed; using regex/filename fallback', exc_info=True)
+    except (ValueError, KeyError):
+        # ValueError: llm.extract_json couldn't find/parse JSON in the response.
+        # KeyError: response JSON didn't have the expected shape.
+        logger.warning('LLM identity extraction returned unparseable output; using regex/filename fallback', exc_info=True)
+    return {'name': fallback_name, 'email': email_guess or ''}
 
 
 @api.get("/users")
@@ -314,8 +371,13 @@ async def bulk_upload_cvs(pid: str, request: Request, files: List[UploadFile] = 
             base = os.path.splitext(os.path.basename(f.filename))[0].replace('_', ' ').replace('-', ' ').strip()
             parsed.append({'filename': f.filename, 'text': text, 'fallback_name': base})
         except HTTPException as e:
+            # Expected/handled failures (bad file type, too large, parse error) —
+            # already logged at their own raise site; just surface to the caller.
             errors.append(f'{f.filename}: {e.detail}')
-        except Exception as e:
+        except (OSError, UnicodeError) as e:
+            # Genuinely unexpected file-handling failure — one bad file shouldn't
+            # abort the whole batch, but it must be visible in the logs.
+            logger.warning('Unexpected error reading uploaded file: filename=%s', f.filename, exc_info=True)
             errors.append(f'{f.filename}: {e}')
 
     # concurrent LLM extraction
@@ -351,7 +413,8 @@ async def bulk_upload_cvs(pid: str, request: Request, files: List[UploadFile] = 
             db.candidates.insert_one(c)
             record_event(pid, 'CANDIDATE_ADDED', 'human', user['email'], {'name': c['name'], 'source': c['source']})
             created.append({'id': c['id'], 'name': c['name'], 'email': c['email'], 'filename': r['filename']})
-        except Exception as e:
+        except PyMongoError as e:
+            logger.warning('Failed to insert candidate: position_id=%s filename=%s', pid, r.get('filename'), exc_info=True)
             errors.append(f"{r.get('filename', '?')}: {e}")
 
     return {'created': created, 'errors': errors, 'count': len(created)}
@@ -367,6 +430,10 @@ async def evaluate_position(pid: str, request: Request):
     cands = list(db.candidates.find({'position_id': pid}, NO_ID))
     if not cands:
         raise HTTPException(400, 'no candidates to evaluate')
+    # Content-hash idempotency: the same JD + same candidate set always hashes the
+    # same way (candidate CVs are sorted first so insertion order doesn't matter),
+    # so re-running evaluation on unchanged inputs reuses the prior result instead of
+    # spending another LLM call. Any edit to the JD or candidate pool changes the hash.
     ihash = hashlib.sha256((pid + (p.get('jd_text') or '') + ''.join(sorted(c.get('cv_text') or '' for c in cands))).encode()).hexdigest()
     existing = db.evaluations.find_one({'input_hash': ihash}, NO_ID)
     if existing:
@@ -388,7 +455,12 @@ Rank ALL candidates against the JD. Return STRICT JSON only:
     try:
         raw = await llm.complete("You are an expert technical recruiter. Output strict JSON only, no markdown fences.", prompt)
         data = llm.extract_json(raw)
-    except Exception as e:
+    except (OpenAIError, ValueError, KeyError) as e:
+        # OpenAIError: the API call itself failed. ValueError: extract_json couldn't
+        # find/parse JSON. KeyError: response JSON was missing an expected field.
+        # All three collapse to the same recovery: fail the task, revert the position,
+        # tell the caller — but only after logging with full context+traceback.
+        logger.error('Evaluation failed for position %s', pid, exc_info=True)
         update_task(task['id'], status='failed', error=str(e))
         set_status(p, 'OPEN', 'agent', 'evaluation', f'evaluation failed: {e}')
         raise HTTPException(502, f'LLM evaluation failed: {e}')
@@ -466,6 +538,11 @@ def decide_approval(aid: str, body: ApprovalDecision, request: Request):
 
 # ---------- scheduling ----------
 def match_interviewer(p: dict, exclude_ids):
+    # Greedy best-match: each shared required skill is worth +10, each point of
+    # current load (pending/accepted interviews not yet resolved) is -1. Skill
+    # overlap dominates the ranking; load only breaks ties between similarly-skilled
+    # interviewers. exclude_ids is who already declined this position, so re-running
+    # scheduling after a decline naturally offers it to someone else.
     required = set(s.lower() for s in (p.get('meta') or {}).get('skills', []))
     best, best_score, best_reason = None, -999, ''
     for ivr in db.interviewers.find({'active': True}, NO_ID):
@@ -495,6 +572,8 @@ def schedule_position(pid: str, request: Request):
         cand = db.candidates.find_one({'id': cid}, NO_ID)
         if not cand:
             continue
+        # This candidate already has a live invite (pending/accepted) — don't
+        # double-book them; re-running /schedule is safe to call repeatedly.
         rounds = db.interviews.count_documents({'position_id': pid, 'candidate_id': cid})
         active = db.interviews.find_one({'position_id': pid, 'candidate_id': cid,
                                          'invite_status': {'$in': ['pending', 'accepted']}}, NO_ID)
@@ -507,6 +586,9 @@ def schedule_position(pid: str, request: Request):
         if not ivr:
             skipped.append(cand['name'])
             continue
+        # rounds+1 makes the key unique per re-schedule attempt (e.g. after a decline),
+        # while still being deterministic — retrying this exact call is a no-op thanks
+        # to a2a_tasks' unique index on idempotency_key.
         key = f'sched:{pid}:{cid}:{rounds + 1}'
         task, _ = get_or_create_task('scheduling', 'schedule_interview', key,
                                      {'position_id': pid, 'candidate_id': cid, 'round': rounds + 1})
@@ -606,9 +688,12 @@ async def submit_feedback(iid: str, body: FeedbackBody, request: Request):
             update_task(task['id'], status='completed',
                         artifacts=[{'type': 'FeedbackPacket', 'schema_version': 'v1',
                                     'data': {'interview_id': iid, 'result': body.result, 'summary': summary}}])
-        except Exception as e:
+        except OpenAIError as e:
+            # Non-critical: the feedback itself was already saved above. A missing
+            # transcript summary degrades the packet but shouldn't fail the request.
+            logger.warning('Transcript summarization failed: interview_id=%s', iid, exc_info=True)
             update_task(task['id'], status='failed', error=str(e))
-            summary = f'(transcript summary unavailable: {e})'
+            summary = '(transcript summary unavailable — see logs)'
     packet = f"Result: {body.result.upper()}\nComments: {body.comments}\n\nTranscript summary:\n{summary or 'n/a'}"
     notify('email', ivr['email'], f"Feedback packet: {cand['name']} / {p['ticket_number']}", packet,
            key=f'email:packet:{iid}:interviewer')
@@ -620,6 +705,11 @@ async def submit_feedback(iid: str, body: FeedbackBody, request: Request):
 
 @api.post("/monitoring/sweep")
 def sla_sweep(request: Request):
+    # No scheduler in this app — a caller (cron, manual trigger, ops dashboard) is
+    # expected to hit this endpoint periodically. Safe to call as often as needed:
+    # the idempotency key includes the current deadline, so a reminder is sent once
+    # per breach, and the deadline is pushed forward an hour after each reminder —
+    # which both re-arms the next reminder and changes the key for it.
     reminders = []
     pending = list(db.interviews.find({'invite_status': 'pending', 'invite_sla_deadline': {'$lt': now_iso()}}, NO_ID))
     for iv in pending:
@@ -671,11 +761,16 @@ def agent_tasks(key: str):
 
 
 def build_snapshot(key: str, user: dict) -> str:
+    # This is the access-control boundary for agent chat: the DB query is filtered
+    # by the caller's scope *before* anything reaches the LLM, so the model has no
+    # opportunity to leak data outside the user's authorization — it can only ever
+    # answer from what's already in this pre-filtered text block. Never pass
+    # unscoped data here and rely on prompt instructions to hide it.
     ids = scope_project_ids(user)
     positions = list(db.positions.find(scope_filter(user), NO_ID))
     proj_map = {p['id']: p['name'] for p in db.projects.find({}, NO_ID)}
     lines = [f"USER: {user['name']} ({user['role']}). Scope: {'all projects' if ids is None else ', '.join(proj_map[i] for i in ids)}."]
-    pos_lines = [f"- {p['ticket_number']} | {p['title']} | project {proj_map.get(p['project_id'])} | status {p['status']} | priority {p.get('priority')} | {db.candidates.count_documents({'position_id': p['id']})} candidates"
+    pos_lines = [f"- {p['ticket_number']} | {p['title']} | project {proj_map.get(p['project_id'])} | status {p['status']} | priority {p.get('priority')} | {db.candidates.count_documents({'position_id': p['id']})} candidates"  # noqa: E501
                  for p in positions]
     lines.append("POSITIONS:\n" + ("\n".join(pos_lines) or "none"))
     scoped_pos_ids = [p['id'] for p in positions]
@@ -684,7 +779,7 @@ def build_snapshot(key: str, user: dict) -> str:
         iv_lines = []
         for iv in db.interviews.find(q, NO_ID).limit(30):
             d = iv_dict(iv)
-            iv_lines.append(f"- {d['ticket_number']} | candidate {d['candidate_name']} | interviewer {d['interviewer_name']} | invite {d['invite_status']}{' (SLA BREACHED)' if d['sla_breached'] else ''} | result {d['result'] or 'pending'}")
+            iv_lines.append(f"- {d['ticket_number']} | candidate {d['candidate_name']} | interviewer {d['interviewer_name']} | invite {d['invite_status']}{' (SLA BREACHED)' if d['sla_breached'] else ''} | result {d['result'] or 'pending'}")  # noqa: E501
         lines.append("INTERVIEWS:\n" + ("\n".join(iv_lines) or "none"))
     if key == 'scheduling':
         lines.append("INTERVIEWER ROSTER:\n" + "\n".join(
@@ -736,8 +831,12 @@ async def agent_chat(key: str, body: ChatBody, request: Request):
             async for delta in llm.stream_chat(system, prompt):
                 full.append(delta)
                 yield f"data: {json.dumps({'delta': delta})}\n\n"
-        except Exception as e:
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        except OpenAIError:
+            # Log agent/user context only — never the message content, which may
+            # contain whatever the user typed (potential PII) plus the authorized
+            # data snapshot injected into the system prompt.
+            logger.warning('Agent chat stream failed: agent=%s user_id=%s', key, user_id, exc_info=True)
+            yield f"data: {json.dumps({'error': 'chat response failed — please retry'})}\n\n"
         db.chat_messages.insert_one({'id': uid(), 'agent': key, 'user_id': user_id,
                                      'role': 'agent', 'content': ''.join(full) or '(no response)',
                                      'created_at': now_iso()})
@@ -802,7 +901,10 @@ async def import_positions(request: Request, file: UploadFile = File(...)):
                 db.positions.insert_one(p)
                 record_event(p['id'], 'POSITION_IMPORTED', 'human', user['email'], {'source': file.filename})
                 created += 1
-        except Exception as e:
+        except (PyMongoError, KeyError, ValueError) as e:
+            # Bulk import UX: one bad row shouldn't abort the batch, but each failure
+            # is still logged (row number only — no candidate/position PII in the log).
+            logger.warning('Import row failed: file=%s row=%d', file.filename, i, exc_info=True)
             errors.append(f'row {i}: {e}')
     return {'created': created, 'updated': updated, 'errors': errors}
 
@@ -836,7 +938,8 @@ async def import_interviewers(request: Request, file: UploadFile = File(...)):
                                             'role': row.get('role') or '', 'skills': skills,
                                             'seniority': row.get('seniority') or '', 'max_weekly': 5, 'active': True})
                 created += 1
-        except Exception as e:
+        except (PyMongoError, KeyError, ValueError) as e:
+            logger.warning('Import row failed: file=%s row=%d', file.filename, i, exc_info=True)
             errors.append(f'row {i}: {e}')
     return {'created': created, 'updated': updated, 'errors': errors}
 
@@ -890,7 +993,8 @@ async def import_candidates(request: Request, file: UploadFile = File(...)):
                 record_event(p['id'], 'CANDIDATE_ADDED', 'human', user['email'],
                              {'name': c['name'], 'source': c['source']})
                 created += 1
-        except Exception as e:
+        except (PyMongoError, KeyError, ValueError) as e:
+            logger.warning('Import row failed: file=%s row=%d', file.filename, i, exc_info=True)
             errors.append(f'row {i}: {e}')
     return {'created': created, 'updated': updated, 'errors': errors}
 
@@ -926,6 +1030,10 @@ def report_summary(request: Request):
 
 @api.post("/reports/send")
 def send_report(request: Request):
+    # Idempotency key is date+scope, not a random ID — so no matter how many times
+    # this is called for the same scope on the same day (retries, double-clicks,
+    # multiple cron triggers), at most one report actually goes out. already_sent_today
+    # in the response tells the caller whether this call was the one that sent it.
     s = report_summary(request)
     today = datetime.now(timezone.utc).date().isoformat()
     digest = (f"Fulfillment report ({today}) — scope: {s['scope']}\n"
@@ -955,11 +1063,37 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ---------- serve the built React SPA (same origin as the API — no CORS/env-baking needed) ----------
+FRONTEND_BUILD_DIR = os.environ.get('FRONTEND_BUILD_DIR', '')
+if FRONTEND_BUILD_DIR and os.path.isdir(FRONTEND_BUILD_DIR):
+    from fastapi.staticfiles import StaticFiles
+    from fastapi.responses import FileResponse
+
+    static_assets_dir = os.path.join(FRONTEND_BUILD_DIR, 'static')
+    if os.path.isdir(static_assets_dir):
+        app.mount('/static', StaticFiles(directory=static_assets_dir), name='static-assets')
+
+    @app.get('/{full_path:path}')
+    async def spa_fallback(full_path: str):
+        candidate = os.path.join(FRONTEND_BUILD_DIR, full_path)
+        if full_path and os.path.isfile(candidate):
+            return FileResponse(candidate)
+        return FileResponse(os.path.join(FRONTEND_BUILD_DIR, 'index.html'))
+
+# Auto-instrument FastAPI (request spans) and pymongo (DB call spans) for Application
+# Insights — gives request-ID/trace correlation "for free" without hand-rolled spans.
+instrument_app(app)
+
 
 @app.on_event("startup")
 def on_startup():
     try:
+        # seed() calls ensure_indexes() internally before checking whether seed
+        # data is needed, so indexes are always created even when seeding is skipped.
         if seeder.seed():
             logger.info("mock data seeded")
-    except Exception as e:
-        logger.error(f"seed failed: {e}")
+    except PyMongoError:
+        # Broad-but-logged is intentional here: startup must not crash the whole app
+        # over a seeding failure (an operator can always seed/fix data after the fact),
+        # but a silent failure here previously meant losing the traceback entirely.
+        logger.exception("Startup seeding failed")

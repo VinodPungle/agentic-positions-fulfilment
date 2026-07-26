@@ -1,6 +1,9 @@
+import logging
 from datetime import datetime, timezone, timedelta
 from db import db, uid, now_iso, ensure_indexes
 from pipeline import record_event, notify
+
+logger = logging.getLogger(__name__)
 
 JD_PYTHON = """Senior Backend Engineer (Python) — Project Phoenix
 Requirements: 6+ years backend engineering; expert Python (FastAPI/Django); PostgreSQL schema design & query optimization; event-driven architectures (Kafka/RabbitMQ); Docker & Kubernetes; CI/CD; AWS. Nice to have: Terraform, gRPC, observability (Prometheus/Grafana). Role: own microservices for the client billing platform, mentor 2 juniors, drive architecture reviews."""
@@ -62,7 +65,9 @@ def iso_ago(**kw):
 def seed():
     ensure_indexes()
     if db.projects.find_one():
+        logger.debug('Seed skipped: projects collection already has data')
         return False
+    logger.info('Seeding demo data (empty database detected)')
 
     phoenix = {'id': uid(), 'name': 'Phoenix', 'client': 'Aurora Retail Group', 'active': True}
     atlas = {'id': uid(), 'name': 'Atlas', 'client': 'Northwind Logistics', 'active': True}
