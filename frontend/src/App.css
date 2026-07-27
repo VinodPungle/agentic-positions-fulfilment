@@ -54,11 +54,11 @@ pre {
   height: 8px;
 }
 ::-webkit-scrollbar-track {
-  background: #0a0a0a;
+  background: hsl(var(--background));
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
+  background: hsl(var(--foreground) / 0.15);
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.3);
+  background: hsl(var(--foreground) / 0.3);
 }

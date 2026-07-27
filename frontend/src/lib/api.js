@@ -52,7 +52,7 @@ export async function streamChat(agentKey, message, onDelta) {
 }
 
 export const STATUS_META = {
-  OPEN: { label: "Open", color: "text-white/70 border-white/20" },
+  OPEN: { label: "Open", color: "text-foreground/70 border-border" },
   EVALUATING: { label: "Evaluating", color: "text-[#007AFF] border-[#007AFF]/40" },
   PENDING_PM_APPROVAL: { label: "Awaiting PM Approval", color: "text-[#FFD60A] border-[#FFD60A]/40" },
   APPROVED: { label: "Approved", color: "text-[#32D74B] border-[#32D74B]/40" },
@@ -60,7 +60,7 @@ export const STATUS_META = {
   INTERVIEW_ACCEPTED: { label: "Interview Accepted", color: "text-[#64D2FF] border-[#64D2FF]/40" },
   FEEDBACK_RECEIVED: { label: "Feedback Received", color: "text-[#BF5AF2] border-[#BF5AF2]/40" },
   FILLED: { label: "Filled", color: "text-[#32D74B] border-[#32D74B]/60" },
-  CLOSED: { label: "Closed", color: "text-white/40 border-white/15" },
+  CLOSED: { label: "Closed", color: "text-muted-foreground border-border" },
 };
 
 export const BOARD_COLUMNS = [
