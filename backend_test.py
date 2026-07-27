@@ -13,8 +13,9 @@ import csv
 import requests
 from docx import Document
 
-# Backend URL from environment
-BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://agentic-positions.preview.emergentagent.com').rstrip('/')
+# Backend URL from environment — no hardcoded fallback; set REACT_APP_BACKEND_URL
+# to whatever environment you're testing against (local Docker, Azure, etc.).
+BASE_URL = os.environ['REACT_APP_BACKEND_URL'].rstrip('/')
 API = f"{BASE_URL}/api"
 
 print(f"Testing against: {API}")

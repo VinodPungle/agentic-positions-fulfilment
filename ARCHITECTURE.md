@@ -1,7 +1,7 @@
 # Agentic AI Recruitment Pipeline — Solution Architecture & Implementation Plan
 
 **Status:** For review (no code written yet)
-**Confirmed choices:** OpenAI (gpt-4o / gpt-5.4-mini) via Emergent Universal Key · Real Slack + Mocked Google Workspace (adapter pattern) · PostgreSQL · CSV/XLSX migration import
+**Confirmed choices:** OpenAI (gpt-4o / gpt-5.4-mini) via the OpenAI API · Real Slack + Mocked Google Workspace (adapter pattern) · PostgreSQL · CSV/XLSX migration import
 
 ---
 
@@ -194,7 +194,7 @@ users(id, email, name, role,            -- pm|dm|tech_architect|staffing|admin
   -- projects; role = pm → projects from user_project_assignments
 ```
 
-**Note on the Emergent environment:** the preview/deploy environment ships MongoDB as the managed default. Two options when we build: (a) run Postgres in-container for the MVP and move to a hosted Postgres (Neon/Supabase — you'd provide a connection string) for deployment, or (b) keep the identical schema shape on MongoDB. I recommend (a) with a hosted Postgres URL at deploy time; flagging it now so it's not a surprise. **[Decision needed at build time]**
+**Note on the deployment environment:** the default managed database is MongoDB. Two options when we build: (a) run Postgres in-container for the MVP and move to a hosted Postgres (Neon/Supabase — you'd provide a connection string) for deployment, or (b) keep the identical schema shape on MongoDB. I recommend (a) with a hosted Postgres URL at deploy time; flagging it now so it's not a surprise. **[Decision needed at build time — resolved: the app was ultimately built and deployed on MongoDB, option (b).]**
 
 ---
 
@@ -203,7 +203,7 @@ users(id, email, name, role,            -- pm|dm|tech_architect|staffing|admin
 | Layer | Choice | Rationale |
 |---|---|---|
 | Agent runtime & API | **FastAPI (Python)** — one service, agents as modules each mounting `/api/agents/{name}/…` | A2A endpoints + chat + dashboard API in one deployable; agents split into services later without changing contracts |
-| LLM | **OpenAI gpt-4o (evaluation, summaries) + gpt-5.4-mini (chat, light tasks)** via **Emergent Universal Key** (emergentintegrations lib) | Your confirmed choice; no key management burden |
+| LLM | **OpenAI gpt-4o (evaluation, summaries) + gpt-5.4-mini (chat, light tasks)** via the **OpenAI SDK directly** | Your confirmed choice; standard OpenAI API key |
 | Orchestration | Custom **Postgres-backed state machine + outbox worker** (APScheduler/async loop for SLA timers) | Durable, inspectable, exactly-once side effects; avoids heavyweight infra (Temporal/Kafka) at this scale — revisit if volume grows |
 | Messaging (real) | **Slack Bolt SDK** — bot token, channel + DM notifications, interactive approve buttons (Phase 2+) | Confirmed real |
 | Google Workspace | **Adapter interfaces** (`CalendarPort`, `EmailPort`, `MeetPort`, `TranscriptPort`) with **mock implementations**: in-app calendar view, in-app inbox, fake Meet links, uploadable/sample transcripts | Confirmed mocked; real Google API adapters drop in behind the same ports in Phase 3 with zero agent-code changes |
