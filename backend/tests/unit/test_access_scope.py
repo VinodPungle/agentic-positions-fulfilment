@@ -7,7 +7,7 @@ import server
 
 
 def test_non_pm_roles_get_account_wide_scope(make_user):
-    for role in ('dm', 'staffing', 'tech_architect', 'admin'):
+    for role in ('service_line_leader', 'staffing', 'tech_architect', 'admin'):
         user = make_user(role=role)
         assert server.scope_project_ids(user) is None
         assert server.scope_filter(user) == {}
@@ -32,8 +32,8 @@ def test_pm_with_no_assignments_sees_nothing(make_user):
 def test_pos_in_scope_true_for_account_wide_roles(make_project, make_user, make_position):
     project = make_project()
     position = make_position(project['id'])
-    dm = make_user(role='dm')
-    assert server.pos_in_scope(dm, position) is True
+    sll = make_user(role='service_line_leader')
+    assert server.pos_in_scope(sll, position) is True
 
 
 def test_pos_in_scope_false_for_pm_outside_project(make_project, make_user, make_position):

@@ -36,7 +36,7 @@ export default function Approvals() {
   const pendingShortlists = pending.filter((a) => a.type === "shortlist");
   const pendingFitments = pending.filter((a) => a.type === "fitment");
   const decided = approvals.filter((a) => a.type === "shortlist" && a.status !== "pending");
-  const canApprove = user && ["pm", "dm", "admin"].includes(user.role);
+  const canApprove = user && ["pm", "service_line_leader", "admin"].includes(user.role);
 
   return (
     <div className="p-8 space-y-8">
@@ -44,7 +44,7 @@ export default function Approvals() {
         <h1 className="font-heading font-black text-4xl sm:text-5xl tracking-tight leading-none">Approvals</h1>
         <p className="font-mono text-xs text-white/40 mt-2 tracking-[0.15em]">HUMAN-IN-THE-LOOP GATES · {pending.length} PENDING IN YOUR SCOPE</p>
       </div>
-      {!canApprove && <p className="font-mono text-xs text-[#FFD60A] border border-[#FFD60A]/30 bg-[#FFD60A]/5 p-4" data-testid="approval-role-warning">Your role ({user?.role}) cannot decide approvals — only project PMs (or DM override).</p>}
+      {!canApprove && <p className="font-mono text-xs text-[#FFD60A] border border-[#FFD60A]/30 bg-[#FFD60A]/5 p-4" data-testid="approval-role-warning">Your role ({user?.role}) cannot decide approvals — only project PMs (or Service Line Leader override).</p>}
       {!pending.length && <p className="font-mono text-sm text-white/40 border border-white/15 bg-[#121212] p-6" data-testid="no-pending-approvals">// no pending approvals in your scope</p>}
 
       {pendingShortlists.length > 0 && (

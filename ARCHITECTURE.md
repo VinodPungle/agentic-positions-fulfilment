@@ -56,7 +56,7 @@ I deliberately **diverged from a naive "one agent per business step" decompositi
 | **Evaluation Agent** | Parse JD + CVs (PDF/DOCX/text); score & rank candidates vs JD with per-candidate reasoning; emit both human-readable report and machine-readable `RankedCandidateList v1` artifact | Scheduling, notifying | "Why was candidate X ranked #2?", "Re-evaluate with more weight on Kubernetes" |
 | **Scheduling Agent** | Interviewer↔candidate matching (skills, role level, availability, load balancing); create calendar event + Meet link + transcription flag (via adapter); attach feedback form link; write `interviews` records | Sending notifications directly (delegates to Notifier); SLA tracking | "Who is free to interview a senior Java candidate this week?", "Reschedule interview INT-17" |
 | **Monitoring Agent** | Watch invite acceptance vs SLA (default 1h); watch feedback submission; on feedback: fetch transcript, generate LLM summary, assemble combined packet; update position status | Sending the reminder itself (emits `SLA_BREACHED` event → Notifier) | "Which interviews are pending feedback?", "Show me the transcript summary for INT-17" |
-| **Reporting Agent** | Periodic + on-status-change fulfillment reports; **scope-aware distribution**: each PM gets their project(s) only, DM/Staffing/Tech Architect get account-wide rollups; per-role formatting | Raw data mutation | "Give me this week's fulfillment summary for Project Phoenix" (scoped to caller's role) |
+| **Reporting Agent** | Periodic + on-status-change fulfillment reports; **scope-aware distribution**: each PM gets their project(s) only, Service Line Leader/Staffing/Tech Architect get account-wide rollups; per-role formatting | Raw data mutation | "Give me this week's fulfillment summary for Project Phoenix" (scoped to caller's role) |
 | **Notification Agent** | Single egress point for ALL Slack + email; consumes the transactional outbox; templating; channel routing rules; dedupe by idempotency key; rate-limit/backoff handling | Deciding *when* to notify (that's event-driven) | "Resend the invite email for INT-17", "What notifications went out today for SR-042?" |
 
 ### 2.2 Why not other decompositions
@@ -112,18 +112,18 @@ Key artifact schemas (all versioned): `RankedCandidateList.v1`, `InterviewAssign
 
 ### 3.3 Role-aware chat & query scoping
 
-The account spans **multiple projects**: each project has its own PM; one Delivery Manager and the Staffing team are accountable across all projects. This is enforced in one place — a **scoped query layer** inside the Orchestrator that every chat interface (orchestrator chat, agent chats, Reporting) passes through:
+The account spans **multiple projects**: each project has its own PM; one Service Line Leader and the Staffing team are accountable across all projects. This is enforced in one place — a **scoped query layer** inside the Orchestrator that every chat interface (orchestrator chat, agent chats, Reporting) passes through:
 
-- Every user has a role (`pm | dm | staffing | tech_architect | admin`) and, for PMs, explicit project assignments.
+- Every user has a role (`pm | service_line_leader | staffing | tech_architect | admin`) and, for PMs, explicit project assignments.
 - Chat requests are LLM-parsed into structured queries (intent + filters), then executed **with a scope filter injected server-side** (`project_id IN caller_scope`) — the LLM never decides access; the database layer does.
-- Examples: a PM asking "how many open positions for Tech Lead?" gets counts for *their* project(s); the DM asking the same gets the account-wide count with a per-project breakdown; a PM asking about another project's ticket gets a polite scope-denied answer.
+- Examples: a PM asking "how many open positions for Tech Lead?" gets counts for *their* project(s); the Service Line Leader asking the same gets the account-wide count with a per-project breakdown; a PM asking about another project's ticket gets a polite scope-denied answer.
 - The same scope filter applies to dashboards, reports, and approval queues.
 
 ### 3.4 Human-in-the-loop checkpoints
 
 | Gate | Mechanism |
 |---|---|
-| **PM approves shortlist** (mandatory) | Orchestrator halts at `PENDING_PM_APPROVAL` and routes the gate to the **PM(s) assigned to the position's project**; Notifier sends Slack message + email with approve/reject link; PM approves via dashboard button or orchestrator chat ("approve SR-042"). Approval recorded in `approvals` table with actor + timestamp. Supports partial approval (approve subset / reorder). DM/admin can approve as escalation fallback (logged as override). |
+| **PM approves shortlist** (mandatory) | Orchestrator halts at `PENDING_PM_APPROVAL` and routes the gate to the **PM(s) assigned to the position's project**; Notifier sends Slack message + email with approve/reject link; PM approves via dashboard button or orchestrator chat ("approve SR-042"). Approval recorded in `approvals` table with actor + timestamp. Supports partial approval (approve subset / reorder). Service Line Leader/admin can approve as escalation fallback (logged as override). |
 | Reschedule / override interviewer | Via Scheduling agent chat or dashboard; produces a new event, old invite cancelled through outbox. |
 | Manual status override | Orchestrator chat, guarded by role; always logged as an event with `actor_type=human`. |
 
@@ -140,7 +140,7 @@ projects(id, name, client, description, active, created_at)
 
 user_project_assignments(user_id FK, project_id FK, role_in_project,
                          PRIMARY KEY(user_id, project_id))
-  -- PMs get explicit rows; DM/Staffing/Tech Architect have account-wide
+  -- PMs get explicit rows; Service Line Leader/Staffing/Tech Architect have account-wide
   -- scope by role (no rows needed)
 
 positions(id, project_id FK, ticket_number UNIQUE, title, jd_file_ref,
@@ -188,9 +188,9 @@ import_jobs(id, source_type,            -- positions_csv|interviewers_csv|cvs_zi
             file_ref, status, row_counts JSONB, validation_report JSONB,
             created_at)
 
-users(id, email, name, role,            -- pm|dm|tech_architect|staffing|admin
+users(id, email, name, role,            -- pm|service_line_leader|tech_architect|staffing|admin
       slack_user_id, notification_prefs JSONB)
-  -- scope resolution: role in (dm, staffing, tech_architect, admin) → all
+  -- scope resolution: role in (service_line_leader, staffing, tech_architect, admin) → all
   -- projects; role = pm → projects from user_project_assignments
 ```
 
@@ -228,7 +228,7 @@ Even in a single deployable, each agent gets its **own credential set and scope 
 
 - **Secrets:** all in backend `.env` (never in code/repo); one env var per agent credential (`SLACK_BOT_TOKEN`, later `GOOGLE_SA_SCHEDULING_JSON`, …). Per-agent Google **service accounts with domain-wide delegation limited to exact scopes** — no shared credentials.
 - **Internal A2A auth:** each agent signs task requests with a per-agent secret (HMAC); tasks record `issued_by`, verified on receipt.
-- **Humans:** role-based (PM/DM/Architect/Staffing/Admin); only PM+Admin can act on approval gates. (Auth method for the app itself — JWT vs Google SSO — to be chosen at build time.)
+- **Humans:** role-based (PM/Service Line Leader/Architect/Staffing/Admin); only PM+Admin can act on approval gates. (Auth method for the app itself — JWT vs Google SSO — to be chosen at build time.)
 - **Audit:** every side effect and transition lands in `events` with actor identity.
 
 ---
@@ -275,7 +275,7 @@ Even in a single deployable, each agent gets its **own credential set and scope 
 - **Scheduling Agent** with mock Calendar/Meet/Email adapters (in-app calendar + inbox viewers so the flow is fully demonstrable)
 - **Notification Agent** with **real Slack** (status-change notifications) + mock email
 - Import wizard (CSV/XLSX for positions + interviewers, CV zip; positions mapped to projects during import)
-- Seeded role-based demo users (1 DM, 2 PMs on different projects, 1 Staffing) to demonstrate scoping
+- Seeded role-based demo users (1 Service Line Leader, 2 PMs on different projects, 1 Staffing) to demonstrate scoping
 - Dashboard: pipeline board, approval queue, per-agent chat, notification log
 - *You provide:* Slack bot token + target channel(s) *(I'll give exact scopes needed: `chat:write`, `channels:read`, `users:read.email`)*
 

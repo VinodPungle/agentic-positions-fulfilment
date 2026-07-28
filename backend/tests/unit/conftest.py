@@ -58,7 +58,7 @@ def make_project():
 
 @pytest.fixture
 def make_user():
-    def _make(role='dm', email=None, name='Test User', project_ids=None):
+    def _make(role='service_line_leader', email=None, name='Test User', project_ids=None):
         u = {'id': db_module.uid(), 'email': email or f'{role}@test.demo', 'name': name, 'role': role}
         db.users.insert_one(u)
         for pid in (project_ids or []):

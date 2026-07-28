@@ -40,8 +40,8 @@ def _client(user_id):
 
 
 @pytest.fixture(scope='session')
-def dm_client(users):
-    return _client(users['dm']['id'])
+def sll_client(users):
+    return _client(users['service_line_leader']['id'])
 
 
 @pytest.fixture(scope='session')
@@ -77,19 +77,19 @@ class TestBasics:
         assert r.json().get('service') == 'recruitment-pipeline'
 
     def test_users_seeded(self, users):
-        for k in ('dm', 'pm_phoenix', 'pm_atlas', 'staffing'):
+        for k in ('service_line_leader', 'pm_phoenix', 'pm_atlas', 'staffing'):
             assert k in users, f"missing role {k}"
 
 
 # ============ Persona scoping ============
 class TestScoping:
-    def test_dm_sees_all_six_positions(self, dm_client):
-        r = dm_client.get(f"{API}/positions", timeout=15)
+    def test_sll_sees_all_six_positions(self, sll_client):
+        r = sll_client.get(f"{API}/positions", timeout=15)
         assert r.status_code == 200
         tickets = sorted(p['ticket_number'] for p in r.json())
         # SR-101..106 seeded
         for t in ['SR-101', 'SR-102', 'SR-103', 'SR-104', 'SR-105', 'SR-106']:
-            assert t in tickets, f"DM missing {t}: got {tickets}"
+            assert t in tickets, f"Service Line Leader missing {t}: got {tickets}"
 
     def test_priya_sees_only_phoenix(self, priya_client):
         r = priya_client.get(f"{API}/positions", timeout=15)
@@ -108,9 +108,9 @@ class TestScoping:
         for phx in ['SR-101', 'SR-102', 'SR-105']:
             assert phx not in tickets, f"Pablo (Atlas PM) should NOT see {phx}"
 
-    def test_priya_denied_atlas_position_detail(self, dm_client, priya_client):
-        # Fetch SR-103's real id via DM (Atlas), then attempt as Priya
-        pos = _get_pos(dm_client, 'SR-103')
+    def test_priya_denied_atlas_position_detail(self, sll_client, priya_client):
+        # Fetch SR-103's real id via Service Line Leader (Atlas), then attempt as Priya
+        pos = _get_pos(sll_client, 'SR-103')
         assert pos is not None
         r = priya_client.get(f"{API}/positions/{pos['id']}", timeout=15)
         assert r.status_code == 403
@@ -119,29 +119,29 @@ class TestScoping:
 
 # ============ Evaluation (REAL LLM) ============
 class TestEvaluation:
-    def test_evaluate_pos_101(self, dm_client):
-        pos = _get_pos(dm_client, 'SR-101')
+    def test_evaluate_pos_101(self, sll_client):
+        pos = _get_pos(sll_client, 'SR-101')
         assert pos is not None
-        r = dm_client.post(f"{API}/positions/{pos['id']}/evaluate", timeout=LLM_TIMEOUT)
+        r = sll_client.post(f"{API}/positions/{pos['id']}/evaluate", timeout=LLM_TIMEOUT)
         assert r.status_code == 200, f"evaluate failed: {r.status_code} {r.text[:400]}"
         data = r.json()
         assert 'ranked_list' in data
         ranked = data['ranked_list']
         assert 'candidates' in ranked and len(ranked['candidates']) >= 1
         # SR-101 detail should now show PENDING_PM_APPROVAL and have an approval
-        d = dm_client.get(f"{API}/positions/{pos['id']}", timeout=15).json()
+        d = sll_client.get(f"{API}/positions/{pos['id']}", timeout=15).json()
         assert d['status'] == 'PENDING_PM_APPROVAL', f"status={d['status']}"
         assert d.get('approval') is not None
 
-    def test_evaluate_idempotent_reused(self, dm_client):
-        pos = _get_pos(dm_client, 'SR-101')
+    def test_evaluate_idempotent_reused(self, sll_client):
+        pos = _get_pos(sll_client, 'SR-101')
         # Re-running same input hash should return reused=True
-        r = dm_client.post(f"{API}/positions/{pos['id']}/evaluate", timeout=LLM_TIMEOUT)
+        r = sll_client.post(f"{API}/positions/{pos['id']}/evaluate", timeout=LLM_TIMEOUT)
         assert r.status_code == 200
         assert r.json().get('reused') is True, r.text[:300]
 
-    def test_agents_evaluation_tasks_show_idempotency(self, dm_client):
-        r = dm_client.get(f"{API}/agents/evaluation/tasks", timeout=15)
+    def test_agents_evaluation_tasks_show_idempotency(self, sll_client):
+        r = sll_client.get(f"{API}/agents/evaluation/tasks", timeout=15)
         assert r.status_code == 200
         tasks = r.json()
         assert any(t.get('idempotency_key', '').startswith('eval:') for t in tasks), \
@@ -150,9 +150,9 @@ class TestEvaluation:
 
 # ============ Approval ============
 class TestApproval:
-    def test_sam_cannot_approve(self, sam_client, dm_client):
+    def test_sam_cannot_approve(self, sam_client, sll_client):
         # SR-102 has pre-seeded pending approval
-        aps = dm_client.get(f"{API}/approvals", timeout=15).json()
+        aps = sll_client.get(f"{API}/approvals", timeout=15).json()
         ap_102 = next((a for a in aps if a['ticket_number'] == 'SR-102'), None)
         assert ap_102, "SR-102 approval not found"
         r = sam_client.post(f"{API}/approvals/{ap_102['id']}/decide",
@@ -214,8 +214,8 @@ class TestScheduling:
 
 # ============ SLA sweep ============
 class TestSLA:
-    def test_sla_sweep_sends_reminder(self, dm_client):
-        r = dm_client.post(f"{API}/monitoring/sweep", timeout=20)
+    def test_sla_sweep_sends_reminder(self, sll_client):
+        r = sll_client.post(f"{API}/monitoring/sweep", timeout=20)
         assert r.status_code == 200, r.text
         data = r.json()
         # SR-103 has seeded breached SLA; should get reminder on first call
@@ -223,9 +223,9 @@ class TestSLA:
         # Note: may be 0 if a previous run already extended, but on very first sweep should have reminders
         # We don't strictly assert >=1 because another test iteration may have run
 
-    def test_sla_sweep_second_run_idempotent(self, dm_client):
+    def test_sla_sweep_second_run_idempotent(self, sll_client):
         # Immediate second sweep: deadline just extended -> no more breaches, checked ideally 0
-        r = dm_client.post(f"{API}/monitoring/sweep", timeout=20)
+        r = sll_client.post(f"{API}/monitoring/sweep", timeout=20)
         assert r.status_code == 200
         data = r.json()
         # Since first sweep extends deadline by 1h, the second should have 0 reminders
@@ -234,50 +234,50 @@ class TestSLA:
 
 # ============ Invite respond ============
 class TestInvite:
-    def test_accept_pos_103_invite(self, dm_client):
+    def test_accept_pos_103_invite(self, sll_client):
         # SR-103 has pending invite
-        ivs = dm_client.get(f"{API}/interviews", timeout=15).json()
+        ivs = sll_client.get(f"{API}/interviews", timeout=15).json()
         iv = next((i for i in ivs if i['ticket_number'] == 'SR-103' and i['invite_status'] == 'pending'), None)
         if not iv:
             pytest.skip("SR-103 pending invite already responded in prior run")
-        r = dm_client.post(f"{API}/interviews/{iv['id']}/respond", json={'action': 'accept'}, timeout=15)
+        r = sll_client.post(f"{API}/interviews/{iv['id']}/respond", json={'action': 'accept'}, timeout=15)
         assert r.status_code == 200, r.text
         assert r.json().get('invite_status') == 'accepted'
         # position status
-        pos = _get_pos(dm_client, 'SR-103')
+        pos = _get_pos(sll_client, 'SR-103')
         assert pos['status'] == 'INTERVIEW_ACCEPTED'
 
-    def test_respond_idempotent(self, dm_client):
-        ivs = dm_client.get(f"{API}/interviews", timeout=15).json()
+    def test_respond_idempotent(self, sll_client):
+        ivs = sll_client.get(f"{API}/interviews", timeout=15).json()
         iv = next((i for i in ivs if i['ticket_number'] == 'SR-103'), None)
         assert iv
-        r = dm_client.post(f"{API}/interviews/{iv['id']}/respond", json={'action': 'accept'}, timeout=15)
+        r = sll_client.post(f"{API}/interviews/{iv['id']}/respond", json={'action': 'accept'}, timeout=15)
         assert r.status_code == 200
         assert r.json().get('already_responded') is True
 
 
 # ============ Feedback + AI summary (REAL LLM) ============
 class TestFeedback:
-    def test_feedback_pos_104_with_summary(self, dm_client):
+    def test_feedback_pos_104_with_summary(self, sll_client):
         # SR-104 seeded as INTERVIEW_ACCEPTED with interview and transcript
-        pos = _get_pos(dm_client, 'SR-104')
+        pos = _get_pos(sll_client, 'SR-104')
         assert pos is not None
-        detail = dm_client.get(f"{API}/positions/{pos['id']}", timeout=15).json()
+        detail = sll_client.get(f"{API}/positions/{pos['id']}", timeout=15).json()
         interviews = detail.get('interviews') or []
         assert interviews, f"SR-104 has no interviews: {detail}"
         iv = interviews[0]
         if iv.get('feedback'):
             pytest.skip("feedback already submitted in previous run")
-        r = dm_client.post(f"{API}/interviews/{iv['id']}/feedback",
-                           json={'result': 'pass', 'comments': 'strong candidate; good communication'},
-                           timeout=LLM_TIMEOUT)
+        r = sll_client.post(f"{API}/interviews/{iv['id']}/feedback",
+                            json={'result': 'pass', 'comments': 'strong candidate; good communication'},
+                            timeout=LLM_TIMEOUT)
         assert r.status_code == 200, r.text
         data = r.json()
         assert data.get('result') == 'pass'
         summary = data.get('transcript_summary') or ''
         assert len(summary) > 20, f"transcript summary too short/missing: {summary[:200]}"
         # position status
-        pos2 = _get_pos(dm_client, 'SR-104')
+        pos2 = _get_pos(sll_client, 'SR-104')
         assert pos2['status'] == 'FEEDBACK_RECEIVED', f"status={pos2['status']}"
 
 
@@ -348,19 +348,19 @@ class TestComms:
 
 # ============ Reports ============
 class TestReports:
-    def test_report_summary_scoped(self, priya_client, dm_client):
+    def test_report_summary_scoped(self, priya_client, sll_client):
         r1 = priya_client.get(f"{API}/reports/summary", timeout=15)
         assert r1.status_code == 200
         s1 = r1.json()
         assert s1.get('total_positions') <= 3, f"Priya scope should be 3 phoenix, got {s1['total_positions']}"
-        r2 = dm_client.get(f"{API}/reports/summary", timeout=15)
+        r2 = sll_client.get(f"{API}/reports/summary", timeout=15)
         s2 = r2.json()
-        assert s2.get('total_positions') >= 6, f"DM should see >=6, got {s2['total_positions']}"
+        assert s2.get('total_positions') >= 6, f"Service Line Leader should see >=6, got {s2['total_positions']}"
 
-    def test_report_send_idempotent(self, dm_client):
-        r1 = dm_client.post(f"{API}/reports/send", timeout=20)
+    def test_report_send_idempotent(self, sll_client):
+        r1 = sll_client.post(f"{API}/reports/send", timeout=20)
         assert r1.status_code == 200
-        r2 = dm_client.post(f"{API}/reports/send", timeout=20)
+        r2 = sll_client.post(f"{API}/reports/send", timeout=20)
         assert r2.status_code == 200
         # One of the two must indicate already_sent_today
         d1, d2 = r1.json(), r2.json()
@@ -370,12 +370,12 @@ class TestReports:
 
 # ============ Import (CSV) ============
 class TestImport:
-    def test_positions_csv_create_then_update(self, dm_client):
+    def test_positions_csv_create_then_update(self, sll_client):
         csv_body = ("ticket_number,title,project,priority,status,skills,jd_text\n"
                     "SR-TEST-1,TEST Ruby Dev,TestProjX,medium,OPEN,ruby;rails,TEST JD initial\n")
         files = {'file': ('positions.csv', csv_body, 'text/csv')}
         # remove Content-Type json header for multipart
-        h = {'X-User-Id': dm_client.headers['X-User-Id']}
+        h = {'X-User-Id': sll_client.headers['X-User-Id']}
         r1 = requests.post(f"{API}/import/positions", files=files, headers=h, timeout=20)
         assert r1.status_code == 200, r1.text
         d1 = r1.json()
@@ -387,10 +387,10 @@ class TestImport:
         d2 = r2.json()
         assert d2['updated'] >= 1 and d2['created'] == 0, f"expected update, got {d2}"
 
-    def test_interviewers_csv_create_then_update(self, dm_client):
+    def test_interviewers_csv_create_then_update(self, sll_client):
         csv_body = ("name,email,role,skills,seniority\n"
                     "TEST Ivy Rivera,test_ivy@delivery.demo,Engineer,python;fastapi,Senior\n")
-        h = {'X-User-Id': dm_client.headers['X-User-Id']}
+        h = {'X-User-Id': sll_client.headers['X-User-Id']}
         r1 = requests.post(f"{API}/import/interviewers",
                            files={'file': ('interviewers.csv', csv_body, 'text/csv')},
                            headers=h, timeout=20)

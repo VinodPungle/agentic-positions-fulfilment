@@ -11,11 +11,11 @@ export function PersonaProvider({ children }) {
     api.get("/users").then((res) => {
       setUsers(res.data);
       // Persona resolution order: whatever was last selected (localStorage) -> the
-      // DM (broadest account-wide view, a sensible default) -> whoever's first.
-      // There's no real auth here — X-User-Id (set in api.js from this same
-      // localStorage value) is how the backend knows "who" is calling.
+      // Service Line Leader (broadest account-wide view, a sensible default) ->
+      // whoever's first. There's no real auth here — X-User-Id (set in api.js from
+      // this same localStorage value) is how the backend knows "who" is calling.
       const saved = localStorage.getItem("personaId");
-      const found = res.data.find((u) => u.id === saved) || res.data.find((u) => u.role === "dm") || res.data[0];
+      const found = res.data.find((u) => u.id === saved) || res.data.find((u) => u.role === "service_line_leader") || res.data[0];
       if (found) {
         localStorage.setItem("personaId", found.id);
         setUser(found);

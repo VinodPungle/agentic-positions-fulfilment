@@ -13,7 +13,7 @@ const NAV = [
   { to: "/reports", label: "REPORTS", icon: BarChart3 },
 ];
 
-const ROLE_LABEL = { pm: "PROJECT MANAGER", dm: "DELIVERY MANAGER", staffing: "STAFFING", tech_architect: "TECH ARCHITECT", admin: "ADMIN" };
+const ROLE_LABEL = { pm: "PROJECT MANAGER", service_line_leader: "SERVICE LINE LEADER", staffing: "STAFFING", tech_architect: "TECH ARCHITECT", admin: "ADMIN" };
 
 export const Layout = ({ children }) => {
   const { users, user, setPersona } = usePersona();

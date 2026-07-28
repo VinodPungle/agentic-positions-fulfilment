@@ -120,13 +120,13 @@ def test_decide_approval_rejects_pm_outside_scope(make_project, make_user, make_
 
 
 def test_unknown_agent_chat_returns_404(make_user):
-    user = make_user(role='dm')
+    user = make_user(role='service_line_leader')
     resp = client.post('/api/agents/nonexistent/chat', headers=_headers(user), json={'message': 'hi'})
     assert resp.status_code == 404
 
 
 def test_request_id_header_present_on_response(make_user):
-    user = make_user(role='dm')
+    user = make_user(role='service_line_leader')
     resp = client.get('/api/positions', headers=_headers(user))
     assert resp.status_code == 200
     assert 'X-Request-Id' in resp.headers

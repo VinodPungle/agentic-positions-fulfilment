@@ -173,7 +173,7 @@ export default function PositionDetail() {
   const ranked = pos.evaluation?.ranked_list?.candidates || [];
   const approvalPending = pos.approval?.status === "pending";
   const approvalApproved = pos.approval?.status === "approved";
-  const canApprove = user && (user.role === "pm" || user.role === "dm" || user.role === "admin");
+  const canApprove = user && (user.role === "pm" || user.role === "service_line_leader" || user.role === "admin");
 
   return (
     <div className="p-8 space-y-6">
@@ -251,7 +251,7 @@ export default function PositionDetail() {
                   <div>
                     <p className="font-mono text-xs tracking-[0.2em] text-[#FFD60A] uppercase">Human-in-the-loop gate</p>
                     <p className="text-sm text-white/70 mt-1">
-                      {canApprove ? "Select candidates and approve the shortlist to unlock scheduling." : "Only the project PM (or DM override) can approve this shortlist."}
+                      {canApprove ? "Select candidates and approve the shortlist to unlock scheduling." : "Only the project PM (or Service Line Leader override) can approve this shortlist."}
                     </p>
                   </div>
                   {canApprove && (

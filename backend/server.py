@@ -80,20 +80,22 @@ def pm_emails_for_project(project_id: str) -> List[str]:
 # ---------- auth/scope helpers ----------
 def current_user(request: Request) -> dict:
     # No real authentication: X-User-Id is a persona switcher set by the frontend
-    # from localStorage (see PersonaContext.js). Falls back to the DM (broadest
-    # account-wide scope) so the app is usable even without a header set.
+    # from localStorage (see PersonaContext.js). Falls back to the Service Line
+    # Leader (broadest account-wide scope) so the app is usable even without a
+    # header set.
     user_id = request.headers.get('X-User-Id')
     user = db.users.find_one({'id': user_id}, NO_ID) if user_id else None
     if not user:
-        user = db.users.find_one({'role': 'dm'}, NO_ID)
+        user = db.users.find_one({'role': 'service_line_leader'}, NO_ID)
     if not user:
         raise HTTPException(401, 'no users seeded')
     return user
 
 
 def scope_project_ids(user: dict) -> Optional[List[str]]:
-    # None is a deliberate sentinel meaning "account-wide, no project filter" (DM,
-    # staffing, tech_architect, admin). Only PMs get an actual list of project IDs,
+    # None is a deliberate sentinel meaning "account-wide, no project filter"
+    # (Service Line Leader, staffing, tech_architect, admin). Only PMs get an
+    # actual list of project IDs,
     # scoped to their assignments — every caller below must handle both cases.
     if user['role'] != 'pm':
         return None  # account-wide
@@ -551,11 +553,11 @@ def decide_approval(aid: str, body: ApprovalDecision, request: Request):
     if user['role'] == 'pm':
         if not pos_in_scope(user, p):
             raise HTTPException(403, 'not your project')
-    elif user['role'] not in ('dm', 'admin'):
-        raise HTTPException(403, 'only the project PM (or DM override) can decide approvals')
+    elif user['role'] not in ('service_line_leader', 'admin'):
+        raise HTTPException(403, 'only the project PM (or Service Line Leader override) can decide approvals')
     if ap['status'] != 'pending':
         return {'status': ap['status'], 'already_decided': True}
-    override = user['role'] in ('dm', 'admin')
+    override = user['role'] in ('service_line_leader', 'admin')
     update = {'actor': user['email'], 'comment': body.comment, 'decided_at': now_iso()}
     if body.decision == 'approve':
         update.update({'status': 'approved', 'approved_candidate_ids': body.approved_candidate_ids})
@@ -762,8 +764,9 @@ def decide_fitment(iid: str, body: FitmentDecision, request: Request):
     interviewer's own pass/fail in submit_feedback — that's the interviewer's read on
     the interview itself; this is the PM's call on whether to move the candidate
     forward, made after reading the transcript summary. Gated the same way shortlist
-    approval is (project PM, or DM/admin override) since it's the same class of
-    decision: a human call this app surfaces the information for but doesn't make."""
+    approval is (project PM, or Service Line Leader/admin override) since it's the
+    same class of decision: a human call this app surfaces the information for but
+    doesn't make."""
     user = current_user(request)
     if body.decision not in ('fit', 'reject'):
         raise HTTPException(400, "decision must be 'fit' or 'reject'")
@@ -774,8 +777,8 @@ def decide_fitment(iid: str, body: FitmentDecision, request: Request):
     if user['role'] == 'pm':
         if not pos_in_scope(user, p):
             raise HTTPException(403, 'not your project')
-    elif user['role'] not in ('dm', 'admin'):
-        raise HTTPException(403, 'only the project PM (or DM override) can decide fitment')
+    elif user['role'] not in ('service_line_leader', 'admin'):
+        raise HTTPException(403, 'only the project PM (or Service Line Leader override) can decide fitment')
     if not db.feedback.find_one({'interview_id': iid}):
         raise HTTPException(400, 'interview feedback must be submitted before a fitment decision can be made')
     if iv.get('fitment_decision'):
@@ -1135,7 +1138,7 @@ def send_report(request: Request):
     scope_tag = 'all' if s['scope'] == 'all projects' else '-'.join(s['scope'])
     key = f"report:{today}:{scope_tag}"
     sent_slack = notify('slack', '#delivery-leadership', 'Fulfillment status report', digest, key=f'slack:{key}')
-    notify('email', 'pm-dm-architect-staffing@delivery-account.demo', 'Fulfillment status report', digest, key=f'email:{key}')
+    notify('email', 'pm-sll-architect-staffing@delivery-account.demo', 'Fulfillment status report', digest, key=f'email:{key}')
     if sent_slack:
         db.a2a_tasks.insert_one({'id': uid(), 'agent': 'reporting', 'skill': 'fulfillment_report',
                                  'idempotency_key': key, 'status': 'completed', 'input': {'scope': s['scope']},

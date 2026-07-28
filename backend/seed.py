@@ -73,11 +73,11 @@ def seed():
     atlas = {'id': uid(), 'name': 'Spotlight', 'client': 'Northwind Logistics', 'active': True}
     db.projects.insert_many([phoenix, atlas])
 
-    dm = {'id': uid(), 'email': 'shantanu@delivery.demo', 'name': 'Shantanu', 'role': 'dm'}
+    sll = {'id': uid(), 'email': 'shantanu@delivery.demo', 'name': 'Shantanu', 'role': 'service_line_leader'}
     pm1 = {'id': uid(), 'email': 'hitesh@delivery.demo', 'name': 'Hitesh', 'role': 'pm'}
     pm2 = {'id': uid(), 'email': 'suchita@delivery.demo', 'name': 'Suchita', 'role': 'pm'}
     staff = {'id': uid(), 'email': 'disha@delivery.demo', 'name': 'Disha', 'role': 'staffing'}
-    db.users.insert_many([dm, pm1, pm2, staff])
+    db.users.insert_many([sll, pm1, pm2, staff])
     db.user_project_assignments.insert_many([
         {'user_id': pm1['id'], 'project_id': phoenix['id']},
         {'user_id': pm2['id'], 'project_id': atlas['id']},
