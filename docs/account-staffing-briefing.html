@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Account Staffing — Agentic Fulfilment Briefing</title>
+<title>Internal Fitments - Agentic Way.</title>
 <meta name="description" content="How the agentic recruitment fulfilment prototype works, agent-by-agent and role-by-role">
 <style>
 @font-face {
@@ -383,7 +383,7 @@ html { scroll-behavior: smooth; }
   <main class="content">
     <header class="doc-head">
       <div class="eyebrow">Internal briefing · Account Staffing platform</div>
-      <h1>An agent for every handoff that used to be a Slack ping.</h1>
+      <h1>Internal Fitments - Agentic Way.</h1>
       <p class="dek">This document walks through the agentic fulfilment prototype now running for the account: what each of the six agents actually does, how they hand work to each other automatically, and — role by role — what disappears from your week because of it.</p>
       <div class="doc-meta">
         <div>Organization<strong>Globant</strong></div>
@@ -422,7 +422,7 @@ html { scroll-behavior: smooth; }
 
       <div class="diagram-card">
 <pre class="mermaid">
-%%{init: {'theme':'base', 'themeVariables': {'primaryColor':'#E8F0FF','primaryTextColor':'#12161D','primaryBorderColor':'#0B5FFF','lineColor':'#8992A0','fontFamily':'IBM Plex Sans','fontSize':'13px','tertiaryColor':'#F5F6F8'}}}%%
+%%{init: {'theme':'base', 'themeVariables': {'primaryColor':'#E8F0FF','primaryTextColor':'#12161D','primaryBorderColor':'#0B5FFF','lineColor':'#8992A0','fontFamily':'IBM Plex Sans','fontSize':'15px','tertiaryColor':'#F5F6F8'}, 'flowchart': {'nodeSpacing': 45, 'rankSpacing': 65, 'curve': 'basis'}}}%%
 flowchart LR
     A[Open] -->|AI evaluates CVs| B[Evaluating]
     B -->|Ranked shortlist ready| C{PM approval}
@@ -677,19 +677,18 @@ flowchart TB
     <!-- ========================= STATE ========================= -->
     <section class="block" id="state">
       <div class="block-head"><h2>Where this stands today</h2></div>
-      <p class="block-intro">This is a working prototype, demoable end-to-end on real data — not a mockup and not production. Being direct about the difference — and about what's a temporary stand-in versus a permanent scope boundary:</p>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Already real</th><th>Still a stand-in</th></tr></thead>
-          <tbody>
-            <tr><td>CV/JD parsing, AI ranking, interviewer matching, SLA tracking, both decision gates, role-scoped access, the full audit trail</td><td>Calendar invites &amp; interview transcripts are mocked, not pulled from real Google Workspace</td></tr>
-            <tr><td>Slack notifications, if a workspace is connected</td><td>Email is logged to an internal outbox rather than actually sent</td></tr>
-            <tr><td colspan="2" style="text-align:center;color:var(--ink-faint);font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.06em;text-transform:uppercase;">Not a gap to close — a boundary the tool deliberately doesn't cross</td></tr>
-            <tr><td>Everything through the Internal Fit decision</td><td>Sharing the profile with the client, scheduling the client interview, and updating Globant's Staffing Portal to reserve/release the candidate — all stay with people, by design</td></tr>
-          </tbody>
-        </table>
+      <div class="callout">
+        <div class="eyebrow">Stays with people, by design</div>
+        <p>Sharing the profile with the client, scheduling the client interview, and updating Globant's Staffing Portal to reserve/release the candidate — all stay with people, by design.</p>
       </div>
-      <p style="margin-top:18px">None of the stand-ins are architectural — they're adapters behind a fixed interface, built to be swapped for the real Google Workspace connection without touching any agent's logic.</p>
+    </section>
+
+    <!-- ========================= CLOSING NOTE ========================= -->
+    <section class="block" id="closing-note">
+      <div class="callout">
+        <div class="eyebrow">Next step</div>
+        <p>This is a working prototype, demoable end-to-end only on mock data. Further approvals needed to go ahead and implement it using Glob.ai.</p>
+      </div>
     </section>
 
     <footer class="doc-foot">
@@ -699,8 +698,8 @@ flowchart TB
   </main>
 </div>
 
-<script type="module">
-  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>
   mermaid.initialize({ startOnLoad: true, securityLevel: "loose" });
 </script>
 </body>
