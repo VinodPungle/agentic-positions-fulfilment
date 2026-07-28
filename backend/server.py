@@ -67,6 +67,16 @@ def iso_in(**kw):
     return (datetime.now(timezone.utc) + timedelta(**kw)).isoformat()
 
 
+def pm_emails_for_project(project_id: str) -> List[str]:
+    """Every user with an explicit PM assignment to this project — used to route
+    interview feedback/summaries to the people who actually own the decision,
+    instead of whoever happened to be logged in when an API call was made."""
+    pm_ids = [r['user_id'] for r in db.user_project_assignments.find({'project_id': project_id}, NO_ID)]
+    if not pm_ids:
+        return []
+    return [u['email'] for u in db.users.find({'id': {'$in': pm_ids}, 'role': 'pm'}, NO_ID)]
+
+
 # ---------- auth/scope helpers ----------
 def current_user(request: Request) -> dict:
     # No real authentication: X-User-Id is a persona switcher set by the frontend
@@ -109,7 +119,7 @@ def pos_dict(p: dict, project=None):
         'project_name': project['name'] if project else None,
         'client': project.get('client') if project else None,
         'jd_text': p.get('jd_text'), 'meta': p.get('meta') or {},
-        'opened_at': p.get('opened_at'), 'filled_at': p.get('filled_at'),
+        'opened_at': p.get('opened_at'), 'internal_fit_decided_at': p.get('internal_fit_decided_at'),
         'candidate_count': db.candidates.count_documents({'position_id': p['id']}),
     }
 
@@ -133,6 +143,8 @@ def iv_dict(iv: dict):
         'match_reason': iv.get('match_reason'), 'transcript_summary': iv.get('transcript_summary'),
         'has_transcript': bool(iv.get('transcript_text')),
         'feedback': {'result': fb['result'], 'comments': fb.get('comments'), 'submitted_by': fb.get('submitted_by')} if fb else None,
+        'fitment_decision': iv.get('fitment_decision'), 'fitment_comment': iv.get('fitment_comment'),
+        'fitment_decided_by': iv.get('fitment_decided_by'),
     }
 
 
@@ -265,7 +277,7 @@ def create_position(body: PositionCreate, request: Request):
         raise HTTPException(409, f'{body.ticket_number} already exists')
     p = {'id': uid(), 'project_id': body.project_id, 'ticket_number': body.ticket_number,
          'title': body.title, 'jd_text': body.jd_text, 'priority': body.priority,
-         'status': 'OPEN', 'opened_at': now_iso(), 'filled_at': None, 'meta': {'skills': body.skills}}
+         'status': 'OPEN', 'opened_at': now_iso(), 'internal_fit_decided_at': None, 'meta': {'skills': body.skills}}
     db.positions.insert_one(p)
     record_event(p['id'], 'POSITION_OPENED', 'human', user['email'], {'ticket': p['ticket_number']})
     return pos_dict(p)
@@ -484,6 +496,11 @@ Rank ALL candidates against the JD. Return STRICT JSON only:
 # ---------- approvals ----------
 @api.get("/approvals")
 def list_approvals(request: Request):
+    """Everything currently waiting on a human decision from this user's scope — both
+    gates from the lifecycle: shortlist approval (type=shortlist) and, once feedback
+    and the transcript summary are in, the Internal Fit / Rejected call (type=fitment).
+    One list so a PM has a single place to see everything that needs them, instead of
+    having to separately remember to check each position's Interviews tab."""
     user = current_user(request)
     ids = scope_project_ids(user)
     out = []
@@ -492,11 +509,29 @@ def list_approvals(request: Request):
         if not p or (ids is not None and p['project_id'] not in ids):
             continue
         ev = db.evaluations.find_one({'id': ap.get('evaluation_id')}, NO_ID) if ap.get('evaluation_id') else None
-        out.append({'id': ap['id'], 'status': ap['status'], 'position_id': p['id'],
+        out.append({'type': 'shortlist', 'id': ap['id'], 'status': ap['status'], 'position_id': p['id'],
                     'ticket_number': p['ticket_number'], 'title': p['title'],
                     'actor': ap.get('actor'), 'comment': ap.get('comment'),
                     'ranked_list': ev['ranked_list'] if ev else None,
                     'created_at': ap['created_at']})
+
+    # fitment_decision: None matches both "field absent" (interviews from before this
+    # feature existed) and "explicitly null" — both genuinely need a decision.
+    for iv in db.interviews.find({'result': {'$ne': None}, 'fitment_decision': None}, NO_ID).sort('created_at', -1):
+        p = db.positions.find_one({'id': iv['position_id']}, NO_ID)
+        if not p or (ids is not None and p['project_id'] not in ids):
+            continue
+        cand = db.candidates.find_one({'id': iv['candidate_id']}, NO_ID)
+        ivr = db.interviewers.find_one({'id': iv['interviewer_id']}, NO_ID)
+        fb = db.feedback.find_one({'interview_id': iv['id']}, NO_ID)
+        out.append({'type': 'fitment', 'id': iv['id'], 'status': 'pending', 'position_id': p['id'],
+                    'ticket_number': p['ticket_number'], 'title': p['title'],
+                    'candidate_name': cand['name'] if cand else None,
+                    'interviewer_name': ivr['name'] if ivr else None,
+                    'interview_result': iv.get('result'),
+                    'transcript_summary': iv.get('transcript_summary'),
+                    'feedback_comments': fb.get('comments') if fb else None,
+                    'created_at': iv.get('created_at') or p.get('opened_at')})
     return out
 
 
@@ -532,7 +567,11 @@ def decide_approval(aid: str, body: ApprovalDecision, request: Request):
     update['status'] = 'rejected'
     db.approvals.update_one({'id': aid}, {'$set': update})
     record_event(p['id'], 'SHORTLIST_REJECTED', 'human', user['email'], {'comment': body.comment})
-    set_status(p, 'OPEN', 'human', user['email'], 'shortlist rejected, back to sourcing')
+    # A rejected shortlist is a visible outcome, not silently invisible re-sourcing:
+    # the position stays REJECTED until someone acts on it. Re-running /evaluate
+    # (e.g. after uploading more candidates) still works from any status, so this
+    # doesn't block getting back into the pipeline.
+    set_status(p, 'REJECTED', 'human', user['email'], 'shortlist rejected')
     return {'status': 'rejected', 'already_decided': False}
 
 
@@ -662,8 +701,9 @@ class FeedbackBody(BaseModel):
 
 
 @api.post("/interviews/{iid}/feedback")
-async def submit_feedback(iid: str, body: FeedbackBody, request: Request):
-    user = current_user(request)
+async def submit_feedback(iid: str, body: FeedbackBody):
+    # No permission gate here (unlike decide_fitment below): in a real deployment the
+    # interviewer submitting this wouldn't hold an app persona at all.
     iv = db.interviews.find_one({'id': iid}, NO_ID)
     if not iv:
         raise HTTPException(404, 'interview not found')
@@ -694,13 +734,65 @@ async def submit_feedback(iid: str, body: FeedbackBody, request: Request):
             logger.warning('Transcript summarization failed: interview_id=%s', iid, exc_info=True)
             update_task(task['id'], status='failed', error=str(e))
             summary = '(transcript summary unavailable — see logs)'
-    packet = f"Result: {body.result.upper()}\nComments: {body.comments}\n\nTranscript summary:\n{summary or 'n/a'}"
+    packet = (f"Internal fitment result: {body.result.upper()}\nInterviewer comments: {body.comments}\n\n"
+              f"Transcript summary:\n{summary or 'n/a'}\n\n"
+              f"Use this to decide whether {cand['name']} should be marked Internal Fit "
+              f"(profile goes forward to the client) or Internal Fit Rejected.")
+    # Goes to the interviewer (who ran the call) and every PM on this project (who owns
+    # the fit/reject call) — not "whoever happened to be logged in," which is what this
+    # used to send to before the fitment decision existed as its own explicit step.
     notify('email', ivr['email'], f"Feedback packet: {cand['name']} / {p['ticket_number']}", packet,
            key=f'email:packet:{iid}:interviewer')
-    notify('email', user['email'], f"Feedback packet: {cand['name']} / {p['ticket_number']}", packet,
-           key=f'email:packet:{iid}:requester')
+    for pm_email in pm_emails_for_project(p['project_id']):
+        notify('email', pm_email, f"Feedback packet: {cand['name']} / {p['ticket_number']}", packet,
+               key=f'email:packet:{iid}:pm:{pm_email}')
     set_status(p, 'FEEDBACK_RECEIVED', 'agent', 'monitoring', f"{cand['name']}: {body.result} (by {ivr['name']})")
     return {'already_submitted': False, 'result': body.result, 'transcript_summary': summary}
+
+
+class FitmentDecision(BaseModel):
+    decision: str  # fit|reject
+    comment: str = ''
+
+
+@api.post("/interviews/{iid}/fitment")
+def decide_fitment(iid: str, body: FitmentDecision, request: Request):
+    """The explicit decision point the feedback packet above exists to inform: is this
+    candidate presentable to the client, or not. Deliberately separate from the
+    interviewer's own pass/fail in submit_feedback — that's the interviewer's read on
+    the interview itself; this is the PM's call on whether to move the candidate
+    forward, made after reading the transcript summary. Gated the same way shortlist
+    approval is (project PM, or DM/admin override) since it's the same class of
+    decision: a human call this app surfaces the information for but doesn't make."""
+    user = current_user(request)
+    if body.decision not in ('fit', 'reject'):
+        raise HTTPException(400, "decision must be 'fit' or 'reject'")
+    iv = db.interviews.find_one({'id': iid}, NO_ID)
+    if not iv:
+        raise HTTPException(404, 'interview not found')
+    p = db.positions.find_one({'id': iv['position_id']}, NO_ID)
+    if user['role'] == 'pm':
+        if not pos_in_scope(user, p):
+            raise HTTPException(403, 'not your project')
+    elif user['role'] not in ('dm', 'admin'):
+        raise HTTPException(403, 'only the project PM (or DM override) can decide fitment')
+    if not db.feedback.find_one({'interview_id': iid}):
+        raise HTTPException(400, 'interview feedback must be submitted before a fitment decision can be made')
+    if iv.get('fitment_decision'):
+        return {'fitment_decision': iv['fitment_decision'], 'already_decided': True}
+
+    cand = db.candidates.find_one({'id': iv['candidate_id']}, NO_ID)
+    db.interviews.update_one({'id': iid}, {'$set': {
+        'fitment_decision': body.decision, 'fitment_comment': body.comment,
+        'fitment_decided_by': user['email'], 'fitment_decided_at': now_iso(),
+    }})
+    if body.decision == 'fit':
+        record_event(p['id'], 'INTERNAL_FIT_MARKED', 'human', user['email'], {'candidate': cand['name']})
+        set_status(p, 'INTERNAL_FIT', 'human', user['email'], f"{cand['name']} marked Internal Fit — ready to share with client")
+    else:
+        record_event(p['id'], 'INTERNAL_FIT_REJECTED', 'human', user['email'], {'candidate': cand['name']})
+        set_status(p, 'INTERNAL_FIT_REJECTED', 'human', user['email'], f"{cand['name']} did not pass internal fitment")
+    return {'fitment_decision': body.decision, 'already_decided': False}
 
 
 @api.post("/monitoring/sweep")
@@ -897,7 +989,7 @@ async def import_positions(request: Request, file: UploadFile = File(...)):
                      'title': row.get('title') or 'Untitled', 'jd_text': row.get('jd_text') or '',
                      'priority': row.get('priority') or 'medium',
                      'status': (row.get('status') or 'OPEN').upper(), 'opened_at': now_iso(),
-                     'filled_at': None, 'meta': {'skills': skills}}
+                     'internal_fit_decided_at': None, 'meta': {'skills': skills}}
                 db.positions.insert_one(p)
                 record_event(p['id'], 'POSITION_IMPORTED', 'human', user['email'], {'source': file.filename})
                 created += 1

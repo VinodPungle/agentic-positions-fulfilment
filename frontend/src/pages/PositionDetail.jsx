@@ -73,6 +73,15 @@ export default function PositionDetail() {
     } catch (e) { toast.error(e.response?.data?.detail || e.message); }
   };
 
+  const decideFitment = async (iid, decision) => {
+    try {
+      const r = await api.post(`/interviews/${iid}/fitment`, { decision, comment: "" });
+      if (r.data.already_decided) toast.info("Already decided (idempotent)");
+      else toast.success(decision === "fit" ? "Marked Internal Fit — ready to share with client" : "Marked Internal Fit Rejected");
+      load();
+    } catch (e) { toast.error(e.response?.data?.detail || e.message); }
+  };
+
   const schedule = async () => {
     setScheduling(true);
     try {
@@ -334,17 +343,44 @@ export default function PositionDetail() {
         <TabsContent value="interviews" className="mt-4 space-y-3">
           {!pos.interviews.length && <p className="font-mono text-sm text-white/40 border border-white/15 bg-[#121212] p-6">// no interviews scheduled</p>}
           {pos.interviews.map((iv) => (
-            <div key={iv.id} className="border border-white/15 bg-[#121212] p-5">
+            <div key={iv.id} className="border border-white/15 bg-[#121212] p-5" data-testid={`interview-row-${iv.id}`}>
               <div className="flex flex-wrap items-center gap-3">
                 <span className="font-semibold">{iv.candidate_name}</span>
                 <span className="font-mono text-xs text-white/40">→ {iv.interviewer_name}</span>
                 <span className={`font-mono text-[10px] uppercase border px-2 py-1 ${iv.sla_breached ? "text-[#FF3B30] border-[#FF3B30]/50" : iv.invite_status === "accepted" ? "text-[#32D74B] border-[#32D74B]/40" : "text-white/50 border-white/20"}`}>
                   {iv.sla_breached ? "SLA BREACHED" : iv.invite_status}
                 </span>
-                {iv.result && <span className={`font-mono text-[10px] uppercase border px-2 py-1 ${iv.result === "pass" ? "text-[#32D74B] border-[#32D74B]/40" : "text-[#FF3B30] border-[#FF3B30]/40"}`}>{iv.result}</span>}
+                {iv.result && <span className={`font-mono text-[10px] uppercase border px-2 py-1 ${iv.result === "pass" ? "text-[#32D74B] border-[#32D74B]/40" : "text-[#FF3B30] border-[#FF3B30]/40"}`}>interviewer: {iv.result}</span>}
+                {iv.fitment_decision && (
+                  <span className={`font-mono text-[10px] uppercase border px-2 py-1 ${iv.fitment_decision === "fit" ? "text-[#32D74B] border-[#32D74B]/60" : "text-[#FF3B30] border-[#FF3B30]/60"}`}>
+                    {iv.fitment_decision === "fit" ? "Internal Fit" : "Internal Fit Rejected"}
+                  </span>
+                )}
               </div>
               <p className="font-mono text-[11px] text-white/40 mt-2">{iv.match_reason}</p>
               <p className="font-mono text-[11px] text-[#007AFF] mt-1">{iv.meet_link} · transcription enabled</p>
+
+              {iv.transcript_summary && (
+                <div className="mt-3 border border-white/10 bg-black/40 p-3" data-testid={`transcript-summary-${iv.id}`}>
+                  <p className="font-mono text-[10px] tracking-[0.2em] text-white/40 uppercase mb-2">Monitoring Agent · transcript summary</p>
+                  <p className="text-xs text-white/70 whitespace-pre-wrap leading-relaxed">{iv.transcript_summary}</p>
+                </div>
+              )}
+
+              {iv.feedback && !iv.fitment_decision && canApprove && (
+                <div className="mt-3 border border-[#FFD60A]/40 bg-[#FFD60A]/5 p-4 flex flex-wrap items-center justify-between gap-3" data-testid={`fitment-gate-${iv.id}`}>
+                  <p className="text-xs text-white/70">Feedback and transcript summary are in — decide if {iv.candidate_name} can be shared with the client.</p>
+                  <div className="flex gap-2 shrink-0">
+                    <Button onClick={() => decideFitment(iv.id, "fit")} data-testid={`mark-fit-${iv.id}`} className="bg-[#32D74B] hover:bg-[#28B33E] text-black rounded-sm h-8">Mark Internal Fit</Button>
+                    <Button onClick={() => decideFitment(iv.id, "reject")} data-testid={`mark-reject-${iv.id}`} variant="outline" className="border-[#FF3B30]/50 text-[#FF3B30] hover:bg-[#FF3B30]/10 rounded-sm h-8">Reject</Button>
+                  </div>
+                </div>
+              )}
+              {iv.fitment_decision && (
+                <p className="font-mono text-[11px] text-white/50 mt-3 border-t border-white/10 pt-3">
+                  FITMENT: {iv.fitment_decision.toUpperCase()} by {iv.fitment_decided_by}{iv.fitment_comment ? ` — "${iv.fitment_comment}"` : ""}
+                </p>
+              )}
             </div>
           ))}
         </TabsContent>

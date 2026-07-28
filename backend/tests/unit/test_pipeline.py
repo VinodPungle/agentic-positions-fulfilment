@@ -29,11 +29,11 @@ def test_notify_duplicate_key_is_skipped_not_raised():
 
 
 def test_record_event_persists_expected_fields():
-    pipeline.record_event('pos-1', 'POSITION_OPENED', 'human', 'user@test.demo', {'ticket': 'POS-1'})
+    pipeline.record_event('pos-1', 'POSITION_OPENED', 'human', 'user@test.demo', {'ticket': 'SR-1'})
     ev = db.events.find_one({'position_id': 'pos-1'})
     assert ev['event_type'] == 'POSITION_OPENED'
     assert ev['actor_type'] == 'human'
-    assert ev['payload'] == {'ticket': 'POS-1'}
+    assert ev['payload'] == {'ticket': 'SR-1'}
 
 
 def test_record_event_swallows_db_failure_and_logs(monkeypatch, caplog):
@@ -64,12 +64,20 @@ def test_set_status_noop_when_status_unchanged(make_project, make_position):
     assert db.events.count_documents({'position_id': position['id']}) == 0
 
 
-def test_set_status_sets_filled_at_only_for_filled(make_project, make_position):
+def test_set_status_sets_internal_fit_decided_at_on_fit_outcomes(make_project, make_position):
     project = make_project()
-    position = make_position(project['id'], status='INTERVIEW_ACCEPTED')
-    pipeline.set_status(position, 'FILLED')
+    position = make_position(project['id'], status='FEEDBACK_RECEIVED')
+    pipeline.set_status(position, 'INTERNAL_FIT')
     stored = db.positions.find_one({'id': position['id']})
-    assert stored['filled_at'] is not None
+    assert stored['internal_fit_decided_at'] is not None
+
+
+def test_set_status_sets_internal_fit_decided_at_on_reject_outcome(make_project, make_position):
+    project = make_project()
+    position = make_position(project['id'], status='FEEDBACK_RECEIVED')
+    pipeline.set_status(position, 'INTERNAL_FIT_REJECTED')
+    stored = db.positions.find_one({'id': position['id']})
+    assert stored['internal_fit_decided_at'] is not None
 
 
 def test_set_status_reraises_on_persist_failure(monkeypatch, make_project, make_position):

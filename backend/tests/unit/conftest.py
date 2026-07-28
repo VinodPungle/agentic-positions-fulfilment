@@ -69,11 +69,11 @@ def make_user():
 
 @pytest.fixture
 def make_position():
-    def _make(project_id, ticket='POS-999', status='OPEN', skills=None, **extra):
+    def _make(project_id, ticket='SR-999', status='OPEN', skills=None, **extra):
         p = {'id': db_module.uid(), 'project_id': project_id, 'ticket_number': ticket,
              'title': extra.pop('title', 'Test Position'), 'jd_text': extra.pop('jd_text', ''),
              'priority': extra.pop('priority', 'medium'), 'status': status,
-             'opened_at': db_module.now_iso(), 'filled_at': None,
+             'opened_at': db_module.now_iso(), 'internal_fit_decided_at': None,
              'meta': {'skills': skills or []}, **extra}
         db.positions.insert_one(p)
         return p

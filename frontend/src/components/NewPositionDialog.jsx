@@ -110,7 +110,7 @@ export default function NewPositionDialog({ onCreated, trigger }) {
               data-testid="np-ticket-input"
               value={form.ticket_number}
               onChange={(e) => setForm({ ...form, ticket_number: e.target.value })}
-              placeholder="POS-107"
+              placeholder="SR-107"
               className="bg-black border-white/20 rounded-sm font-mono"
             />
           </div>

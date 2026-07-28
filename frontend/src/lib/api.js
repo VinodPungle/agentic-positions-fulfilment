@@ -56,10 +56,12 @@ export const STATUS_META = {
   EVALUATING: { label: "Evaluating", color: "text-[#007AFF] border-[#007AFF]/40" },
   PENDING_PM_APPROVAL: { label: "Awaiting PM Approval", color: "text-[#FFD60A] border-[#FFD60A]/40" },
   APPROVED: { label: "Approved", color: "text-[#32D74B] border-[#32D74B]/40" },
+  REJECTED: { label: "Rejected", color: "text-[#FF3B30] border-[#FF3B30]/40" },
   INTERVIEW_INVITE_SENT: { label: "Invite Sent", color: "text-[#FF9F0A] border-[#FF9F0A]/40" },
   INTERVIEW_ACCEPTED: { label: "Interview Accepted", color: "text-[#64D2FF] border-[#64D2FF]/40" },
   FEEDBACK_RECEIVED: { label: "Feedback Received", color: "text-[#BF5AF2] border-[#BF5AF2]/40" },
-  FILLED: { label: "Filled", color: "text-[#32D74B] border-[#32D74B]/60" },
+  INTERNAL_FIT: { label: "Internal Fit", color: "text-[#32D74B] border-[#32D74B]/60" },
+  INTERNAL_FIT_REJECTED: { label: "Internal Fit Rejected", color: "text-[#FF3B30] border-[#FF3B30]/60" },
   CLOSED: { label: "Closed", color: "text-muted-foreground border-border" },
 };
 
@@ -68,7 +70,9 @@ export const BOARD_COLUMNS = [
   { key: "EVALUATING", statuses: ["EVALUATING"] },
   { key: "PENDING_PM_APPROVAL", statuses: ["PENDING_PM_APPROVAL"] },
   { key: "APPROVED", statuses: ["APPROVED"] },
+  { key: "REJECTED", statuses: ["REJECTED"] },
   { key: "INTERVIEWING", statuses: ["INTERVIEW_INVITE_SENT", "INTERVIEW_ACCEPTED"], label: "Interviewing" },
   { key: "FEEDBACK_RECEIVED", statuses: ["FEEDBACK_RECEIVED"] },
-  { key: "FILLED", statuses: ["FILLED", "CLOSED"], label: "Filled / Closed" },
+  { key: "INTERNAL_FIT", statuses: ["INTERNAL_FIT"], label: "Internal Fit — ready for client" },
+  { key: "INTERNAL_FIT_REJECTED", statuses: ["INTERNAL_FIT_REJECTED", "CLOSED"], label: "Not Proceeding" },
 ];

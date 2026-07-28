@@ -52,12 +52,12 @@ I deliberately **diverged from a naive "one agent per business step" decompositi
 
 | Agent | Owns | Does NOT do | Chat interface |
 |---|---|---|---|
-| **Orchestrator** | Position lifecycle state machine; dispatching A2A tasks; PM approval gate (routed to the **owning project's PM**); SLA timer scheduling; retry/compensation decisions; **role-aware query engine** backing the system chat | Any domain logic (ranking, matching, messaging) | Role-scoped conversational UI: "What's the status of POS-042?", "How many open positions for Tech Lead?", "Fulfillment status for Project Phoenix", "Approve the shortlist for POS-042" — answers filtered to the caller's scope |
+| **Orchestrator** | Position lifecycle state machine; dispatching A2A tasks; PM approval gate (routed to the **owning project's PM**); SLA timer scheduling; retry/compensation decisions; **role-aware query engine** backing the system chat | Any domain logic (ranking, matching, messaging) | Role-scoped conversational UI: "What's the status of SR-042?", "How many open positions for Tech Lead?", "Fulfillment status for Project Phoenix", "Approve the shortlist for SR-042" — answers filtered to the caller's scope |
 | **Evaluation Agent** | Parse JD + CVs (PDF/DOCX/text); score & rank candidates vs JD with per-candidate reasoning; emit both human-readable report and machine-readable `RankedCandidateList v1` artifact | Scheduling, notifying | "Why was candidate X ranked #2?", "Re-evaluate with more weight on Kubernetes" |
 | **Scheduling Agent** | Interviewer↔candidate matching (skills, role level, availability, load balancing); create calendar event + Meet link + transcription flag (via adapter); attach feedback form link; write `interviews` records | Sending notifications directly (delegates to Notifier); SLA tracking | "Who is free to interview a senior Java candidate this week?", "Reschedule interview INT-17" |
 | **Monitoring Agent** | Watch invite acceptance vs SLA (default 1h); watch feedback submission; on feedback: fetch transcript, generate LLM summary, assemble combined packet; update position status | Sending the reminder itself (emits `SLA_BREACHED` event → Notifier) | "Which interviews are pending feedback?", "Show me the transcript summary for INT-17" |
 | **Reporting Agent** | Periodic + on-status-change fulfillment reports; **scope-aware distribution**: each PM gets their project(s) only, DM/Staffing/Tech Architect get account-wide rollups; per-role formatting | Raw data mutation | "Give me this week's fulfillment summary for Project Phoenix" (scoped to caller's role) |
-| **Notification Agent** | Single egress point for ALL Slack + email; consumes the transactional outbox; templating; channel routing rules; dedupe by idempotency key; rate-limit/backoff handling | Deciding *when* to notify (that's event-driven) | "Resend the invite email for INT-17", "What notifications went out today for POS-042?" |
+| **Notification Agent** | Single egress point for ALL Slack + email; consumes the transactional outbox; templating; channel routing rules; dedupe by idempotency key; rate-limit/backoff handling | Deciding *when* to notify (that's event-driven) | "Resend the invite email for INT-17", "What notifications went out today for SR-042?" |
 
 ### 2.2 Why not other decompositions
 
@@ -98,10 +98,10 @@ Aligned with the A2A protocol model (AgentCard + task lifecycle). Each agent ser
 {
   "schema": "a2a.task.v1",
   "task_id": "uuid",
-  "idempotency_key": "eval:POS-042:jd-sha256:cvset-sha256",
+  "idempotency_key": "eval:SR-042:jd-sha256:cvset-sha256",
   "skill": "evaluate_candidates",
   "issued_by": "orchestrator",
-  "correlation": {"position_id": "POS-042", "pipeline_run_id": "uuid"},
+  "correlation": {"position_id": "SR-042", "pipeline_run_id": "uuid"},
   "input": { "...skill-specific, versioned schema..." },
   "status": "submitted|working|input_required|completed|failed",
   "artifacts": [{"type": "RankedCandidateList", "schema_version": "v1", "data": {}}]
@@ -123,7 +123,7 @@ The account spans **multiple projects**: each project has its own PM; one Delive
 
 | Gate | Mechanism |
 |---|---|
-| **PM approves shortlist** (mandatory) | Orchestrator halts at `PENDING_PM_APPROVAL` and routes the gate to the **PM(s) assigned to the position's project**; Notifier sends Slack message + email with approve/reject link; PM approves via dashboard button or orchestrator chat ("approve POS-042"). Approval recorded in `approvals` table with actor + timestamp. Supports partial approval (approve subset / reorder). DM/admin can approve as escalation fallback (logged as override). |
+| **PM approves shortlist** (mandatory) | Orchestrator halts at `PENDING_PM_APPROVAL` and routes the gate to the **PM(s) assigned to the position's project**; Notifier sends Slack message + email with approve/reject link; PM approves via dashboard button or orchestrator chat ("approve SR-042"). Approval recorded in `approvals` table with actor + timestamp. Supports partial approval (approve subset / reorder). DM/admin can approve as escalation fallback (logged as override). |
 | Reschedule / override interviewer | Via Scheduling agent chat or dashboard; produces a new event, old invite cancelled through outbox. |
 | Manual status override | Orchestrator chat, guarded by role; always logged as an event with `actor_type=human`. |
 
@@ -238,7 +238,7 @@ Even in a single deployable, each agent gets its **own credential set and scope 
 ### 7.1 Idempotency — three layers
 
 1. **Task level:** every A2A task carries a deterministic `idempotency_key` (e.g., `eval:{position}:{sha256(jd)}:{sha256(cv_set)}`). Unique constraint on `a2a_tasks.idempotency_key` → a retried dispatch returns the existing task instead of re-running. Evaluation reuse is content-hash based: same JD+CVs ⇒ same evaluation, no duplicate LLM spend.
-2. **Side-effect level (the critical one):** **transactional outbox.** Agents never call Slack/email/calendar directly. The state transition and its outbox rows commit in **one DB transaction**; a separate worker drains the outbox with `FOR UPDATE SKIP LOCKED`, marks `sent` with the provider's message ID. Unique `outbox.idempotency_key` (e.g., `slack:POS-042:INTERVIEW_INVITE_SENT:INT-17`) makes duplicate sends structurally impossible — retrying any workflow re-derives the same keys and hits the constraint.
+2. **Side-effect level (the critical one):** **transactional outbox.** Agents never call Slack/email/calendar directly. The state transition and its outbox rows commit in **one DB transaction**; a separate worker drains the outbox with `FOR UPDATE SKIP LOCKED`, marks `sent` with the provider's message ID. Unique `outbox.idempotency_key` (e.g., `slack:SR-042:INTERVIEW_INVITE_SENT:INT-17`) makes duplicate sends structurally impossible — retrying any workflow re-derives the same keys and hits the constraint.
 3. **Entity level:** unique constraints on natural keys (`positions.ticket_number`, `interviews.idempotency_key = sched:{position}:{candidate}:{round}`) so re-imports and re-schedules upsert instead of duplicate.
 
 ### 7.2 Failure recovery

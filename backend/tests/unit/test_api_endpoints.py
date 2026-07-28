@@ -88,6 +88,23 @@ def test_decide_approval_approve_transitions_position(make_project, make_user, m
     assert db.positions.find_one({'id': position['id']})['status'] == 'APPROVED'
 
 
+def test_decide_approval_reject_sets_position_rejected(make_project, make_user, make_position):
+    # A rejected shortlist must be a visible REJECTED status, not silently
+    # revert to OPEN (which used to make rejections invisible on the board).
+    project = make_project()
+    pm = make_user(role='pm', project_ids=[project['id']])
+    position = make_position(project['id'], status='PENDING_PM_APPROVAL')
+    db.approvals.insert_one({'id': 'ap-3', 'position_id': position['id'], 'evaluation_id': 'ev-3',
+                             'status': 'pending', 'approved_candidate_ids': [], 'actor': None,
+                             'comment': None, 'decided_at': None, 'created_at': '2026-01-01'})
+
+    resp = client.post('/api/approvals/ap-3/decide', headers=_headers(pm),
+                       json={'decision': 'reject', 'approved_candidate_ids': [], 'comment': 'not a fit'})
+    assert resp.status_code == 200
+    assert resp.json()['status'] == 'rejected'
+    assert db.positions.find_one({'id': position['id']})['status'] == 'REJECTED'
+
+
 def test_decide_approval_rejects_pm_outside_scope(make_project, make_user, make_position):
     own_project = make_project(name='Phoenix')
     other_project = make_project(name='Atlas')
@@ -113,3 +130,118 @@ def test_request_id_header_present_on_response(make_user):
     resp = client.get('/api/positions', headers=_headers(user))
     assert resp.status_code == 200
     assert 'X-Request-Id' in resp.headers
+
+
+def _seed_interview_with_feedback(position_id, iid='iv-1'):
+    db.candidates.insert_one({'id': 'cand-fit', 'position_id': position_id, 'name': 'Fit Candidate',
+                              'email': 'fit@example.demo', 'cv_text': 'cv'})
+    db.interviewers.insert_one({'id': 'ivr-1', 'name': 'Panel Member', 'email': 'panel@example.demo',
+                                'role': 'Engineer', 'skills': [], 'seniority': 'senior', 'active': True})
+    db.interviews.insert_one({'id': iid, 'position_id': position_id, 'candidate_id': 'cand-fit',
+                              'interviewer_id': 'ivr-1', 'invite_status': 'accepted', 'result': 'pass',
+                              'transcript_summary': 'strong candidate', 'match_reason': '', 'idempotency_key': iid,
+                              'created_at': '2026-01-01'})
+    db.feedback.insert_one({'id': 'fb-1', 'interview_id': iid, 'result': 'pass', 'comments': 'good',
+                            'submitted_by': 'panel@example.demo', 'submitted_at': '2026-01-01'})
+
+
+def test_decide_fitment_mark_fit_transitions_position(make_project, make_user, make_position):
+    project = make_project()
+    pm = make_user(role='pm', project_ids=[project['id']])
+    position = make_position(project['id'], status='FEEDBACK_RECEIVED')
+    _seed_interview_with_feedback(position['id'])
+
+    resp = client.post('/api/interviews/iv-1/fitment', headers=_headers(pm), json={'decision': 'fit', 'comment': ''})
+    assert resp.status_code == 200
+    assert resp.json() == {'fitment_decision': 'fit', 'already_decided': False}
+    assert db.positions.find_one({'id': position['id']})['status'] == 'INTERNAL_FIT'
+
+
+def test_decide_fitment_mark_reject_transitions_position(make_project, make_user, make_position):
+    project = make_project()
+    pm = make_user(role='pm', project_ids=[project['id']])
+    position = make_position(project['id'], status='FEEDBACK_RECEIVED')
+    _seed_interview_with_feedback(position['id'])
+
+    resp = client.post('/api/interviews/iv-1/fitment', headers=_headers(pm), json={'decision': 'reject', 'comment': 'not a fit'})
+    assert resp.status_code == 200
+    assert db.positions.find_one({'id': position['id']})['status'] == 'INTERNAL_FIT_REJECTED'
+
+
+def test_decide_fitment_requires_feedback_first(make_project, make_user, make_position):
+    project = make_project()
+    pm = make_user(role='pm', project_ids=[project['id']])
+    position = make_position(project['id'], status='INTERVIEW_ACCEPTED')
+    db.interviews.insert_one({'id': 'iv-no-fb', 'position_id': position['id'], 'candidate_id': 'cand-x',
+                              'interviewer_id': 'ivr-x', 'invite_status': 'accepted', 'result': None,
+                              'match_reason': '', 'idempotency_key': 'iv-no-fb', 'created_at': '2026-01-01'})
+
+    resp = client.post('/api/interviews/iv-no-fb/fitment', headers=_headers(pm), json={'decision': 'fit', 'comment': ''})
+    assert resp.status_code == 400
+
+
+def test_decide_fitment_rejects_pm_outside_scope(make_project, make_user, make_position):
+    own_project = make_project(name='Phoenix')
+    other_project = make_project(name='Atlas')
+    pm = make_user(role='pm', project_ids=[own_project['id']])
+    position = make_position(other_project['id'], status='FEEDBACK_RECEIVED')
+    _seed_interview_with_feedback(position['id'])
+
+    resp = client.post('/api/interviews/iv-1/fitment', headers=_headers(pm), json={'decision': 'fit', 'comment': ''})
+    assert resp.status_code == 403
+
+
+def test_decide_fitment_idempotent_when_already_decided(make_project, make_user, make_position):
+    project = make_project()
+    pm = make_user(role='pm', project_ids=[project['id']])
+    position = make_position(project['id'], status='FEEDBACK_RECEIVED')
+    _seed_interview_with_feedback(position['id'])
+
+    first = client.post('/api/interviews/iv-1/fitment', headers=_headers(pm), json={'decision': 'fit', 'comment': ''})
+    second = client.post('/api/interviews/iv-1/fitment', headers=_headers(pm), json={'decision': 'reject', 'comment': ''})
+    assert first.json()['already_decided'] is False
+    assert second.json() == {'fitment_decision': 'fit', 'already_decided': True}
+    # The second (contradictory) call must not have flipped the outcome.
+    assert db.positions.find_one({'id': position['id']})['status'] == 'INTERNAL_FIT'
+
+
+def test_approvals_list_includes_pending_fitment_decisions(make_project, make_user, make_position):
+    # This is the gap that prompted adding fitment items to /approvals at all: a
+    # pending fitment decision must surface here, not just on the position's own page.
+    project = make_project()
+    pm = make_user(role='pm', project_ids=[project['id']])
+    position = make_position(project['id'], status='FEEDBACK_RECEIVED')
+    _seed_interview_with_feedback(position['id'])
+
+    resp = client.get('/api/approvals', headers=_headers(pm))
+    assert resp.status_code == 200
+    fitment_items = [a for a in resp.json() if a['type'] == 'fitment']
+    assert len(fitment_items) == 1
+    assert fitment_items[0]['id'] == 'iv-1'
+    assert fitment_items[0]['status'] == 'pending'
+    assert fitment_items[0]['candidate_name'] == 'Fit Candidate'
+    assert fitment_items[0]['transcript_summary'] == 'strong candidate'
+
+
+def test_approvals_list_excludes_decided_fitments(make_project, make_user, make_position):
+    project = make_project()
+    pm = make_user(role='pm', project_ids=[project['id']])
+    position = make_position(project['id'], status='FEEDBACK_RECEIVED')
+    _seed_interview_with_feedback(position['id'])
+    client.post('/api/interviews/iv-1/fitment', headers=_headers(pm), json={'decision': 'fit', 'comment': ''})
+
+    resp = client.get('/api/approvals', headers=_headers(pm))
+    fitment_items = [a for a in resp.json() if a['type'] == 'fitment']
+    assert fitment_items == []
+
+
+def test_approvals_list_scopes_fitment_to_pm_project(make_project, make_user, make_position):
+    own_project = make_project(name='Phoenix')
+    other_project = make_project(name='Atlas')
+    pm = make_user(role='pm', project_ids=[own_project['id']])
+    position = make_position(other_project['id'], status='FEEDBACK_RECEIVED')
+    _seed_interview_with_feedback(position['id'])
+
+    resp = client.get('/api/approvals', headers=_headers(pm))
+    fitment_items = [a for a in resp.json() if a['type'] == 'fitment']
+    assert fitment_items == []

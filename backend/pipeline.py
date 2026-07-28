@@ -41,8 +41,8 @@ def set_status(position, new_status, actor_type='agent', actor_id='orchestrator'
     if old == new_status:
         return
     update = {'status': new_status}
-    if new_status == 'FILLED':
-        update['filled_at'] = now_iso()
+    if new_status in ('INTERNAL_FIT', 'INTERNAL_FIT_REJECTED'):
+        update['internal_fit_decided_at'] = now_iso()
     try:
         db.positions.update_one({'id': position['id']}, {'$set': update})
     except PyMongoError:
