@@ -73,7 +73,7 @@ export const AgentChatPanel = ({ agentKey, agentName, suggestions = [] }) => {
       <div className="flex gap-2 p-3 border-t border-white/15 bg-[#0D0D0D]">
         <Input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()}
           placeholder={`Message ${agentName}…`} disabled={busy} data-testid="chat-input"
-          className="bg-black border-white/20 rounded-sm font-mono text-sm text-white placeholder:text-white/30" />
+          className="bg-black border border-[#007AFF]/60 rounded-sm font-mono text-sm text-white placeholder:text-white/30 focus-visible:border-[#007AFF] focus-visible:ring-[#007AFF]" />
         <Button onClick={() => send()} disabled={busy || !input.trim()} data-testid="chat-send-button"
           className="bg-[#007AFF] hover:bg-[#0063CC] rounded-sm px-4">
           <SendHorizontal size={16} />

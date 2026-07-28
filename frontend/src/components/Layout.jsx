@@ -26,7 +26,7 @@ export const Layout = ({ children }) => {
             <CircuitBoard size={20} className="text-[#007AFF]" />
             <span className="font-heading font-black text-lg tracking-tight">FULFIL·A2A</span>
           </div>
-          <p className="font-mono text-[10px] text-muted-foreground mt-1 tracking-[0.2em]">RECRUITMENT PIPELINE</p>
+          <p className="font-mono text-[10px] text-muted-foreground mt-1 tracking-[0.2em]">ACCOUNT STAFFING</p>
         </div>
         <nav className="flex-1 py-4">
           {NAV.map(({ to, label, icon: Icon }) => (
