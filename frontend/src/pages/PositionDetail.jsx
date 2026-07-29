@@ -47,7 +47,7 @@ export default function PositionDetail() {
   if (err) return (
     <div className="p-8">
       <p className="font-mono text-sm text-[#FF3B30]" data-testid="position-error">ACCESS: {err}</p>
-      <Link to="/" className="font-mono text-xs text-[#007AFF] mt-4 inline-block">← back to pipeline</Link>
+      <Link to="/" className="font-mono text-xs text-[#007AFF] mt-4 inline-block">← back to dashboard</Link>
     </div>
   );
   if (!pos) return <div className="p-8 font-mono text-sm text-white/40">loading…</div>;
@@ -178,7 +178,7 @@ export default function PositionDetail() {
   return (
     <div className="p-8 space-y-6">
       <Link to="/" className="font-mono text-xs text-white/40 hover:text-white flex items-center gap-2 transition-colors duration-150" data-testid="back-to-pipeline">
-        <ArrowLeft size={12} /> PIPELINE
+        <ArrowLeft size={12} /> DASHBOARD
       </Link>
       <div className="flex flex-wrap items-start justify-between gap-4 border border-white/15 bg-[#121212] p-6">
         <div>

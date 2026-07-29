@@ -4,7 +4,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { usePersona } from "../context/PersonaContext";
 
 const NAV = [
-  { to: "/", label: "PIPELINE", icon: LayoutGrid },
+  { to: "/", label: "DASHBOARD", icon: LayoutGrid },
   { to: "/approvals", label: "APPROVALS", icon: CheckSquare },
   { to: "/interviews", label: "INTERVIEWS", icon: CalendarClock },
   { to: "/agents", label: "AGENTS", icon: Bot },
