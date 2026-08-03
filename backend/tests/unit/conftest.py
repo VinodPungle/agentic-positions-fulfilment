@@ -82,10 +82,10 @@ def make_position():
 
 @pytest.fixture
 def make_interviewer():
-    def _make(name='Interviewer', email=None, skills=None, active=True):
+    def _make(name='Interviewer', email=None, skills=None, active=True, availability=None):
         i = {'id': db_module.uid(), 'name': name, 'email': email or f'{name.lower()}@panel.demo',
              'role': 'Engineer', 'skills': skills or [], 'seniority': 'senior',
-             'max_weekly': 5, 'active': active}
+             'max_weekly': 5, 'active': active, 'availability': availability or []}
         db.interviewers.insert_one(i)
         return i
     return _make

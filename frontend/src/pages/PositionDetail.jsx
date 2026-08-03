@@ -7,10 +7,10 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Textarea } from "../components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "../components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { Checkbox } from "../components/ui/checkbox";
 import { toast } from "sonner";
-import { ArrowLeft, Sparkles, CalendarPlus, Loader2, UserPlus, Upload, FileText, Pencil, FilePlus2 } from "lucide-react";
+import { ArrowLeft, Sparkles, CalendarPlus, Loader2, UserPlus, Upload, FileText, Pencil, FilePlus2, X } from "lucide-react";
 
 export default function PositionDetail() {
   const { id } = useParams();
@@ -21,7 +21,8 @@ export default function PositionDetail() {
   const [scheduling, setScheduling] = useState(false);
   const [selected, setSelected] = useState({});
   const [newCand, setNewCand] = useState({ name: "", email: "", cv_text: "" });
-  const [dialogOpen, setDialogOpen] = useState(false);
+  const [showCandidateForm, setShowCandidateForm] = useState(false);
+  const [editingCandidateId, setEditingCandidateId] = useState(null);
   const [jdEditOpen, setJdEditOpen] = useState(false);
   const [jdDraft, setJdDraft] = useState("");
   const [jdSkillsDraft, setJdSkillsDraft] = useState("");
@@ -93,14 +94,52 @@ export default function PositionDetail() {
     setScheduling(false);
   };
 
-  const addCandidate = async () => {
+  const openCreateCandidateForm = () => {
+    if (showCandidateForm && !editingCandidateId) { setShowCandidateForm(false); return; }
+    setEditingCandidateId(null);
+    setNewCand({ name: "", email: "", cv_text: "" });
+    setShowCandidateForm(true);
+  };
+
+  const startEditCandidate = (c) => {
+    setEditingCandidateId(c.id);
+    setNewCand({ name: c.name || "", email: c.email || "", cv_text: c.cv_text || "" });
+    setShowCandidateForm(true);
+  };
+
+  const cancelCandidateForm = () => {
+    setShowCandidateForm(false);
+    setEditingCandidateId(null);
+    setNewCand({ name: "", email: "", cv_text: "" });
+  };
+
+  const saveCandidate = async () => {
     try {
-      await api.post(`/positions/${id}/candidates`, newCand);
-      toast.success("Candidate added");
-      setDialogOpen(false);
-      setNewCand({ name: "", email: "", cv_text: "" });
+      if (editingCandidateId) {
+        await api.patch(`/positions/${id}/candidates/${editingCandidateId}`, { name: newCand.name, cv_text: newCand.cv_text });
+        toast.success("Candidate updated");
+      } else {
+        await api.post(`/positions/${id}/candidates`, newCand);
+        toast.success("Candidate added");
+      }
+      cancelCandidateForm();
       load();
-    } catch (e) { toast.error(e.response?.data?.detail || e.message); }
+    } catch (e) {
+      if (!editingCandidateId && e.response?.status === 409) {
+        // Already on this position (e.g. brought in by CV bulk upload or the CSV
+        // importer) — switch to editing that existing record instead of failing.
+        const email = newCand.email.trim().toLowerCase();
+        const name = newCand.name.trim().toLowerCase();
+        const existing = pos.candidates.find((c) =>
+          (email && c.email?.toLowerCase() === email) || (!email && c.name?.toLowerCase() === name));
+        if (existing) {
+          toast.info(`${existing.name} already exists for this position — editing their record instead`);
+          startEditCandidate(existing);
+          return;
+        }
+      }
+      toast.error(e.response?.data?.detail || e.message);
+    }
   };
 
   const parseCvIntoDialog = async (e) => {
@@ -273,26 +312,9 @@ export default function PositionDetail() {
 
         <TabsContent value="candidates" className="mt-4 space-y-4">
           <div className="flex flex-wrap gap-2 items-center">
-            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-              <DialogTrigger asChild>
-                <Button variant="outline" data-testid="add-candidate-button" className="border-white/20 rounded-sm hover:bg-white/5"><UserPlus size={14} className="mr-2" />Add candidate</Button>
-              </DialogTrigger>
-              <DialogContent className="bg-[#121212] border-white/20 text-white">
-                <DialogHeader><DialogTitle className="font-heading">Add candidate</DialogTitle></DialogHeader>
-                <Input placeholder="Name" value={newCand.name} data-testid="candidate-name-input" onChange={(e) => setNewCand({ ...newCand, name: e.target.value })} className="bg-black border-white/20 rounded-sm" />
-                <Input placeholder="Email" value={newCand.email} data-testid="candidate-email-input" onChange={(e) => setNewCand({ ...newCand, email: e.target.value })} className="bg-black border-white/20 rounded-sm" />
-                <div className="flex items-center justify-between">
-                  <span className="font-mono text-[10px] tracking-[0.2em] uppercase text-white/50">CV text</span>
-                  <label className={`inline-flex items-center gap-2 border border-white/20 px-3 py-1.5 cursor-pointer hover:bg-white/5 font-mono text-[10px] uppercase tracking-[0.15em] ${cvParsing ? "opacity-60 pointer-events-none" : ""}`}>
-                    {cvParsing ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
-                    {cvParsing ? "parsing…" : "upload PDF/DOCX"}
-                    <input ref={cvInputRef} type="file" accept=".pdf,.docx,.txt" onChange={parseCvIntoDialog} className="hidden" data-testid="add-cand-file-input" />
-                  </label>
-                </div>
-                <Textarea placeholder="Paste CV text…" rows={8} value={newCand.cv_text} data-testid="candidate-cv-input" onChange={(e) => setNewCand({ ...newCand, cv_text: e.target.value })} className="bg-black border-white/20 rounded-sm font-mono text-xs" />
-                <Button onClick={addCandidate} disabled={!newCand.name || !newCand.cv_text} data-testid="save-candidate-button" className="bg-[#007AFF] rounded-sm">Save</Button>
-              </DialogContent>
-            </Dialog>
+            <Button variant="outline" onClick={openCreateCandidateForm} data-testid="add-candidate-button" className="border-white/20 rounded-sm hover:bg-white/5">
+              <UserPlus size={14} className="mr-2" />Add candidate
+            </Button>
 
             <label
               data-testid="bulk-cv-upload-label"
@@ -312,6 +334,46 @@ export default function PositionDetail() {
             </label>
             <span className="font-mono text-[10px] text-white/40">Drop multiple PDF / DOCX / TXT — LLM extracts name + email per file</span>
           </div>
+
+          {showCandidateForm && (
+            <div className="border border-white/15 bg-[#121212] p-6 space-y-4" data-testid="add-candidate-form">
+              <div className="flex items-center justify-between">
+                <p className="font-mono text-[10px] tracking-[0.2em] uppercase text-white/50">
+                  {editingCandidateId ? `Editing ${newCand.name || "candidate"}` : "New candidate"}
+                </p>
+                <button onClick={cancelCandidateForm} data-testid="cancel-candidate-button" className="text-white/40 hover:text-white" aria-label="Cancel">
+                  <X size={14} />
+                </button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="font-mono text-[10px] tracking-[0.2em] uppercase text-white/50">Name *</label>
+                  <Input placeholder="Name" value={newCand.name} data-testid="candidate-name-input" onChange={(e) => setNewCand({ ...newCand, name: e.target.value })} className="bg-black border-white/20 rounded-sm" />
+                </div>
+                <div className="space-y-1">
+                  <label className="font-mono text-[10px] tracking-[0.2em] uppercase text-white/50">Email</label>
+                  <Input placeholder="Email" value={newCand.email} disabled={!!editingCandidateId} data-testid="candidate-email-input" onChange={(e) => setNewCand({ ...newCand, email: e.target.value })} className="bg-black border-white/20 rounded-sm disabled:opacity-50" />
+                </div>
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <label className="font-mono text-[10px] tracking-[0.2em] uppercase text-white/50">CV text *</label>
+                  <label className={`inline-flex items-center gap-2 border border-white/20 px-3 py-1.5 cursor-pointer hover:bg-white/5 font-mono text-[10px] uppercase tracking-[0.15em] ${cvParsing ? "opacity-60 pointer-events-none" : ""}`}>
+                    {cvParsing ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
+                    {cvParsing ? "parsing…" : "upload PDF/DOCX"}
+                    <input ref={cvInputRef} type="file" accept=".pdf,.docx,.txt" onChange={parseCvIntoDialog} className="hidden" data-testid="add-cand-file-input" />
+                  </label>
+                </div>
+                <Textarea placeholder="Paste CV text…" rows={8} value={newCand.cv_text} data-testid="candidate-cv-input" onChange={(e) => setNewCand({ ...newCand, cv_text: e.target.value })} className="bg-black border-white/20 rounded-sm font-mono text-xs" />
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button onClick={cancelCandidateForm} variant="outline" className="border-white/20 text-white/70 hover:bg-white/5 rounded-sm">Cancel</Button>
+                <Button onClick={saveCandidate} disabled={!newCand.name || !newCand.cv_text} data-testid="save-candidate-button" className="bg-[#007AFF] hover:bg-[#0063CC] rounded-sm">
+                  {editingCandidateId ? "Save changes" : "Save"}
+                </Button>
+              </div>
+            </div>
+          )}
 
           {bulkResult && (
             <div className="border border-white/15 bg-[#0A0A0A] p-4 space-y-2" data-testid="bulk-cv-result">
@@ -333,7 +395,13 @@ export default function PositionDetail() {
                   <span className="font-semibold">{c.name}</span>
                   {c.email && <span className="font-mono text-[11px] text-white/40 ml-3">{c.email}</span>}
                 </div>
-                <span className="font-mono text-[10px] text-white/40">{c.source}</span>
+                <div className="flex items-center gap-3">
+                  <span className="font-mono text-[10px] text-white/40">{c.source}</span>
+                  <button onClick={() => startEditCandidate(c)} data-testid={`edit-candidate-${c.id}`}
+                    className="text-white/30 hover:text-[#007AFF]" aria-label={`Edit ${c.name}`}>
+                    <Pencil size={12} />
+                  </button>
+                </div>
               </div>
               <p className="font-mono text-xs text-white/50 mt-2 whitespace-pre-wrap leading-relaxed">{c.cv_text}</p>
             </div>

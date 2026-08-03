@@ -245,3 +245,153 @@ def test_approvals_list_scopes_fitment_to_pm_project(make_project, make_user, ma
     resp = client.get('/api/approvals', headers=_headers(pm))
     fitment_items = [a for a in resp.json() if a['type'] == 'fitment']
     assert fitment_items == []
+
+
+def test_create_interviewer_success(make_user):
+    user = make_user()
+    resp = client.post('/api/interviewers', headers=_headers(user), json={
+        'name': 'Priya Menon', 'email': 'priya.menon@panel.demo', 'role': 'Principal Engineer',
+        'skills': ['python', 'fastapi', ' aws '],
+        'availability': ['2026-07-24T15:30:00', '2026-07-25T16:30:00', ''],
+    })
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body['name'] == 'Priya Menon'
+    assert body['skills'] == ['python', 'fastapi', 'aws']
+    assert body['availability'] == ['2026-07-24T15:30:00', '2026-07-25T16:30:00']
+    assert body['active'] is True
+    assert body['current_load'] == 0
+    stored = db.interviewers.find_one({'email': 'priya.menon@panel.demo'})
+    assert stored is not None and stored['id'] == body['id']
+
+
+def test_create_interviewer_duplicate_email_conflict(make_user, make_interviewer):
+    user = make_user()
+    make_interviewer(email='dup@panel.demo')
+    resp = client.post('/api/interviewers', headers=_headers(user), json={
+        'name': 'Someone Else', 'email': 'dup@panel.demo', 'skills': [],
+    })
+    assert resp.status_code == 409
+
+
+def test_list_interviewers_includes_availability(make_user, make_interviewer):
+    user = make_user()
+    make_interviewer(email='avail@panel.demo', availability=['2026-08-01T10:00:00'])
+
+    resp = client.get('/api/interviewers', headers=_headers(user))
+    assert resp.status_code == 200
+    ivr = next(i for i in resp.json() if i['email'] == 'avail@panel.demo')
+    assert ivr['availability'] == ['2026-08-01T10:00:00']
+
+
+def test_schedule_position_uses_and_consumes_interviewer_availability(
+        make_project, make_user, make_position, make_interviewer):
+    project = make_project()
+    pm = make_user(role='pm', project_ids=[project['id']])
+    position = make_position(project['id'], status='APPROVED', skills=['react'])
+    ivr = make_interviewer('Slotted', skills=['react'],
+                           availability=['2099-05-01T10:00:00', '2099-05-02T10:00:00'])
+    cand = {'id': 'cand-sched-1', 'position_id': position['id'], 'name': 'Test Cand',
+            'email': 'cand@example.demo', 'cv_text': 'react dev'}
+    db.candidates.insert_one(cand)
+    db.approvals.insert_one({'id': 'ap-sched-1', 'position_id': position['id'], 'evaluation_id': 'ev-1',
+                             'status': 'approved', 'approved_candidate_ids': [cand['id']], 'actor': pm['email'],
+                             'comment': None, 'decided_at': server.now_iso(), 'created_at': server.now_iso()})
+
+    resp = client.post(f"/api/positions/{position['id']}/schedule", headers=_headers(pm))
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert len(body['created']) == 1
+
+    iv = db.interviews.find_one({'position_id': position['id']})
+    assert iv['interviewer_id'] == ivr['id']
+    assert iv['scheduled_at'] == '2099-05-01T10:00:00'
+
+    remaining = db.interviewers.find_one({'id': ivr['id']})['availability']
+    assert remaining == ['2099-05-02T10:00:00']
+
+
+def test_schedule_position_falls_back_when_interviewer_has_no_availability(
+        make_project, make_user, make_position, make_interviewer):
+    project = make_project()
+    pm = make_user(role='pm', project_ids=[project['id']])
+    position = make_position(project['id'], status='APPROVED', skills=['go'])
+    make_interviewer('NoSlots', skills=['go'])
+    cand = {'id': 'cand-sched-2', 'position_id': position['id'], 'name': 'Test Cand 2',
+            'email': 'cand2@example.demo', 'cv_text': 'go dev'}
+    db.candidates.insert_one(cand)
+    db.approvals.insert_one({'id': 'ap-sched-2', 'position_id': position['id'], 'evaluation_id': 'ev-2',
+                             'status': 'approved', 'approved_candidate_ids': [cand['id']], 'actor': pm['email'],
+                             'comment': None, 'decided_at': server.now_iso(), 'created_at': server.now_iso()})
+
+    resp = client.post(f"/api/positions/{position['id']}/schedule", headers=_headers(pm))
+    assert resp.status_code == 200, resp.text
+    iv = db.interviews.find_one({'position_id': position['id']})
+    assert iv['scheduled_at'] > server.now_iso()  # the iso_in(days=1) placeholder, still in the future
+
+
+def test_update_interviewer_edits_details_and_availability(make_user, make_interviewer):
+    user = make_user()
+    ivr = make_interviewer('Original Name', skills=['python'], availability=['2099-01-01T10:00:00'])
+
+    resp = client.patch(f"/api/interviewers/{ivr['id']}", headers=_headers(user), json={
+        'name': 'Updated Name', 'role': 'Staff Engineer', 'skills': ['python', 'aws'],
+        'availability': ['2099-02-01T09:00:00', '2099-02-02T09:00:00'],
+    })
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body['name'] == 'Updated Name'
+    assert body['role'] == 'Staff Engineer'
+    assert body['skills'] == ['python', 'aws']
+    assert body['availability'] == ['2099-02-01T09:00:00', '2099-02-02T09:00:00']
+    stored = db.interviewers.find_one({'id': ivr['id']})
+    assert stored['name'] == 'Updated Name'
+
+
+def test_update_interviewer_not_found(make_user):
+    user = make_user()
+    resp = client.patch('/api/interviewers/does-not-exist', headers=_headers(user), json={'name': 'X'})
+    assert resp.status_code == 404
+
+
+def test_add_candidate_duplicate_email_conflict(make_project, make_user, make_position):
+    project = make_project()
+    pm = make_user(role='pm', project_ids=[project['id']])
+    position = make_position(project['id'])
+    db.candidates.insert_one({'id': 'cand-dup-1', 'position_id': position['id'], 'name': 'Existing',
+                              'email': 'existing@mail.demo', 'cv_text': 'cv'})
+
+    resp = client.post(f"/api/positions/{position['id']}/candidates", headers=_headers(pm), json={
+        'name': 'Someone Else', 'email': 'existing@mail.demo', 'cv_text': 'cv2',
+    })
+    assert resp.status_code == 409
+
+
+def test_add_candidate_duplicate_name_conflict_when_no_email(make_project, make_user, make_position):
+    project = make_project()
+    pm = make_user(role='pm', project_ids=[project['id']])
+    position = make_position(project['id'])
+    db.candidates.insert_one({'id': 'cand-dup-2', 'position_id': position['id'], 'name': 'Same Name',
+                              'email': '', 'cv_text': 'cv'})
+
+    resp = client.post(f"/api/positions/{position['id']}/candidates", headers=_headers(pm), json={
+        'name': 'Same Name', 'email': '', 'cv_text': 'cv2',
+    })
+    assert resp.status_code == 409
+
+
+def test_update_candidate_edits_fields(make_project, make_user, make_position):
+    project = make_project()
+    pm = make_user(role='pm', project_ids=[project['id']])
+    position = make_position(project['id'])
+    db.candidates.insert_one({'id': 'cand-edit-1', 'position_id': position['id'], 'name': 'Old Name',
+                              'email': 'old@mail.demo', 'cv_text': 'old cv'})
+
+    resp = client.patch(f"/api/positions/{position['id']}/candidates/cand-edit-1", headers=_headers(pm), json={
+        'name': 'New Name', 'cv_text': 'new cv text',
+    })
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body['name'] == 'New Name'
+    assert body['cv_text'] == 'new cv text'
+    assert body['email'] == 'old@mail.demo'  # untouched — not sent in the update

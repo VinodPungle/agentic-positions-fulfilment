@@ -85,17 +85,23 @@ def seed():
 
     interviewers = [
         {'id': uid(), 'name': 'Rohit Malhotra', 'email': 'rohit@panel.demo', 'role': 'Principal Engineer',
-         'skills': ['python', 'fastapi', 'postgresql', 'kafka', 'kubernetes', 'aws'], 'seniority': 'principal', 'max_weekly': 5, 'active': True},
+         'skills': ['python', 'fastapi', 'postgresql', 'kafka', 'kubernetes', 'aws'], 'seniority': 'principal', 'max_weekly': 5, 'active': True,
+         'availability': [iso_in(days=1, hours=6), iso_in(days=2, hours=10), iso_in(days=3, hours=7)]},
         {'id': uid(), 'name': 'Lena Fischer', 'email': 'lena@panel.demo', 'role': 'Staff Engineer',
-         'skills': ['python', 'django', 'postgresql', 'terraform', 'aws'], 'seniority': 'staff', 'max_weekly': 5, 'active': True},
+         'skills': ['python', 'django', 'postgresql', 'terraform', 'aws'], 'seniority': 'staff', 'max_weekly': 5, 'active': True,
+         'availability': [iso_in(days=1, hours=9), iso_in(days=2, hours=6)]},
         {'id': uid(), 'name': 'Kwame Mensah', 'email': 'kwame@panel.demo', 'role': 'Engineering Manager',
-         'skills': ['node.js', 'typescript', 'mongodb', 'leadership', 'aws'], 'seniority': 'manager', 'max_weekly': 5, 'active': True},
+         'skills': ['node.js', 'typescript', 'mongodb', 'leadership', 'aws'], 'seniority': 'manager', 'max_weekly': 5, 'active': True,
+         'availability': [iso_in(days=2, hours=8), iso_in(days=3, hours=11), iso_in(days=4, hours=5)]},
         {'id': uid(), 'name': 'Yuki Tanaka', 'email': 'yuki@panel.demo', 'role': 'Senior Frontend Engineer',
-         'skills': ['react', 'typescript', 'javascript', 'css'], 'seniority': 'senior', 'max_weekly': 5, 'active': True},
+         'skills': ['react', 'typescript', 'javascript', 'css'], 'seniority': 'senior', 'max_weekly': 5, 'active': True,
+         'availability': [iso_in(days=1, hours=11), iso_in(days=3, hours=9)]},
         {'id': uid(), 'name': 'Olga Petrova', 'email': 'olga@panel.demo', 'role': 'DevOps Architect',
-         'skills': ['kubernetes', 'terraform', 'aws', 'ci/cd', 'docker'], 'seniority': 'architect', 'max_weekly': 5, 'active': True},
+         'skills': ['kubernetes', 'terraform', 'aws', 'ci/cd', 'docker'], 'seniority': 'architect', 'max_weekly': 5, 'active': True,
+         'availability': [iso_in(days=2, hours=7), iso_in(days=4, hours=10)]},
         {'id': uid(), 'name': 'Arjun Iyer', 'email': 'arjun@panel.demo', 'role': 'Tech Lead',
-         'skills': ['node.js', 'nestjs', 'mongodb', 'redis', 'leadership'], 'seniority': 'lead', 'max_weekly': 5, 'active': True},
+         'skills': ['node.js', 'nestjs', 'mongodb', 'redis', 'leadership'], 'seniority': 'lead', 'max_weekly': 5, 'active': True,
+         'availability': [iso_in(days=1, hours=8), iso_in(days=2, hours=12), iso_in(days=5, hours=6)]},
     ]
     db.interviewers.insert_many(interviewers)
 

@@ -1,11 +1,12 @@
 import { NavLink, useLocation } from "react-router-dom";
-import { LayoutGrid, CheckSquare, CalendarClock, Bot, MessageSquare, Upload, BarChart3, CircuitBoard } from "lucide-react";
+import { LayoutGrid, CheckSquare, Users, CalendarClock, Bot, MessageSquare, Upload, BarChart3, CircuitBoard } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { usePersona } from "../context/PersonaContext";
 
 const NAV = [
   { to: "/", label: "DASHBOARD", icon: LayoutGrid },
   { to: "/approvals", label: "APPROVALS", icon: CheckSquare },
+  { to: "/interview-panel", label: "INTERVIEW PANEL", icon: Users },
   { to: "/interviews", label: "INTERVIEWS", icon: CalendarClock },
   { to: "/agents", label: "AGENTS", icon: Bot },
   { to: "/comms", label: "COMMS", icon: MessageSquare },
@@ -30,7 +31,7 @@ export const Layout = ({ children }) => {
         </div>
         <nav className="flex-1 py-4">
           {NAV.map(({ to, label, icon: Icon }) => (
-            <NavLink key={to} to={to} data-testid={`nav-${label.toLowerCase()}`}
+            <NavLink key={to} to={to} data-testid={`nav-${label.toLowerCase().replace(/\s+/g, "-")}`}
               className={({ isActive }) =>
                 `flex items-center gap-3 px-5 py-3 font-mono text-xs tracking-[0.15em] border-l-2 transition-colors duration-150 ${
                   isActive ? "border-[#007AFF] text-foreground bg-accent" : "border-transparent text-muted-foreground hover:text-foreground hover:bg-accent/50"}`}>

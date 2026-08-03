@@ -323,11 +323,51 @@ def add_candidate(pid: str, body: CandidateCreate, request: Request):
     p = db.positions.find_one({'id': pid}, NO_ID)
     if not p or not pos_in_scope(user, p):
         raise HTTPException(404, 'position not found in your scope')
-    c = {'id': uid(), 'position_id': pid, 'name': body.name, 'email': body.email,
+    # Same natural key the bulk CSV/CV importers already upsert on for this position
+    # (email first, name as fallback) — catches a candidate re-added by hand who was
+    # actually already brought in via /candidates/bulk or /import/candidates.
+    name = body.name.strip()
+    email = body.email.strip()
+    existing = db.candidates.find_one({'position_id': pid, 'email': email}, NO_ID) if email else None
+    if not existing and name:
+        existing = db.candidates.find_one({'position_id': pid, 'name': name}, NO_ID)
+    if existing:
+        raise HTTPException(409, f'{name or email} already exists for this position')
+    c = {'id': uid(), 'position_id': pid, 'name': name, 'email': email,
          'cv_text': body.cv_text, 'source': 'manual', 'created_at': now_iso()}
     db.candidates.insert_one(c)
     record_event(pid, 'CANDIDATE_ADDED', 'human', user['email'], {'name': body.name})
     return {'id': c['id'], 'name': c['name']}
+
+
+class UpdateCandidate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    cv_text: Optional[str] = None
+
+
+@api.patch("/positions/{pid}/candidates/{cid}")
+def update_candidate(pid: str, cid: str, body: UpdateCandidate, request: Request):
+    user = current_user(request)
+    p = db.positions.find_one({'id': pid}, NO_ID)
+    if not p or not pos_in_scope(user, p):
+        raise HTTPException(404, 'position not found in your scope')
+    cand = db.candidates.find_one({'id': cid, 'position_id': pid}, NO_ID)
+    if not cand:
+        raise HTTPException(404, 'candidate not found')
+    update = {}
+    if body.name is not None:
+        update['name'] = body.name.strip() or cand['name']
+    if body.email is not None:
+        update['email'] = body.email.strip()
+    if body.cv_text is not None:
+        update['cv_text'] = body.cv_text
+    if update:
+        db.candidates.update_one({'id': cid}, {'$set': update})
+        cand = db.candidates.find_one({'id': cid}, NO_ID)
+        record_event(pid, 'CANDIDATE_UPDATED', 'human', user['email'], {'name': cand['name']})
+    return {'id': cand['id'], 'name': cand['name'], 'email': cand.get('email'),
+            'cv_text': cand.get('cv_text'), 'source': cand.get('source')}
 
 
 class StatusPatch(BaseModel):
@@ -578,25 +618,37 @@ def decide_approval(aid: str, body: ApprovalDecision, request: Request):
 
 
 # ---------- scheduling ----------
+def _next_available_slot(ivr):
+    # Earliest declared availability slot that hasn't already passed. Availability
+    # is optional data — interviewers with none (e.g. CSV-imported) simply never
+    # get a slot here, which match_interviewer treats as neutral, not disqualifying.
+    slots = sorted(s for s in (ivr.get('availability') or []) if s >= now_iso())
+    return slots[0] if slots else None
+
+
 def match_interviewer(p: dict, exclude_ids):
     # Greedy best-match: each shared required skill is worth +10, each point of
-    # current load (pending/accepted interviews not yet resolved) is -1. Skill
-    # overlap dominates the ranking; load only breaks ties between similarly-skilled
-    # interviewers. exclude_ids is who already declined this position, so re-running
-    # scheduling after a decline naturally offers it to someone else.
+    # current load (pending/accepted interviews not yet resolved) is -1, having a
+    # future declared availability slot is +3. Skill overlap dominates the ranking;
+    # load and availability only break ties between similarly-skilled interviewers.
+    # exclude_ids is who already declined this position, so re-running scheduling
+    # after a decline naturally offers it to someone else.
     required = set(s.lower() for s in (p.get('meta') or {}).get('skills', []))
-    best, best_score, best_reason = None, -999, ''
+    best, best_score, best_reason, best_slot = None, -999, '', None
     for ivr in db.interviewers.find({'active': True}, NO_ID):
         if ivr['id'] in exclude_ids:
             continue
         overlap = required & set(s.lower() for s in (ivr.get('skills') or []))
         load = db.interviews.count_documents({'interviewer_id': ivr['id'], 'result': None,
                                               'invite_status': {'$in': ['pending', 'accepted']}})
-        score = len(overlap) * 10 - load
+        slot = _next_available_slot(ivr)
+        score = len(overlap) * 10 - load + (3 if slot else 0)
         if score > best_score:
-            best, best_score = ivr, score
-            best_reason = f"{ivr['name']} matched: {len(overlap)}/{len(required)} required skills ({', '.join(sorted(overlap)) or 'none'}), current load {load}."
-    return best, best_reason
+            best, best_score, best_slot = ivr, score, slot
+            avail_note = f"next available slot {slot}" if slot else "no declared availability"
+            best_reason = (f"{ivr['name']} matched: {len(overlap)}/{len(required)} required skills "
+                           f"({', '.join(sorted(overlap)) or 'none'}), current load {load}, {avail_note}.")
+    return best, best_reason, best_slot
 
 
 @api.post("/positions/{pid}/schedule")
@@ -623,7 +675,7 @@ def schedule_position(pid: str, request: Request):
             continue
         declined = [iv['interviewer_id'] for iv in db.interviews.find(
             {'position_id': pid, 'candidate_id': cid, 'invite_status': 'declined'}, NO_ID)]
-        ivr, reason = match_interviewer(p, declined)
+        ivr, reason, avail_slot = match_interviewer(p, declined)
         if not ivr:
             skipped.append(cand['name'])
             continue
@@ -633,8 +685,10 @@ def schedule_position(pid: str, request: Request):
         key = f'sched:{pid}:{cid}:{rounds + 1}'
         task, _ = get_or_create_task('scheduling', 'schedule_interview', key,
                                      {'position_id': pid, 'candidate_id': cid, 'round': rounds + 1})
+        # Use the interviewer's own declared slot when they have one — falls back to
+        # the old "tomorrow" placeholder for interviewers with no availability on file.
         iv = {'id': uid(), 'position_id': pid, 'candidate_id': cid, 'interviewer_id': ivr['id'],
-              'scheduled_at': iso_in(days=1),
+              'scheduled_at': avail_slot or iso_in(days=1),
               'meet_link': f"https://meet.mock/{p['ticket_number'].lower()}-{cand['name'].split()[0].lower()}",
               'calendar_event_id': f'cal-evt-{key[-12:]}', 'feedback_form_ref': f'form-{key[-8:]}',
               'invite_status': 'pending', 'invite_sla_deadline': iso_in(hours=1),
@@ -642,6 +696,10 @@ def schedule_position(pid: str, request: Request):
               'transcript_text': MOCK_TRANSCRIPT_TPL.format(skill=', '.join((p.get('meta') or {}).get('skills', ['the role'])[:2])),
               'match_reason': reason, 'idempotency_key': key, 'created_at': now_iso()}
         db.interviews.insert_one(iv)
+        if avail_slot:
+            # Consumed — remove it so the same slot isn't offered to the next
+            # candidate matched to this interviewer later in this same loop.
+            db.interviewers.update_one({'id': ivr['id']}, {'$pull': {'availability': avail_slot}})
         update_task(task['id'], status='completed',
                     artifacts=[{'type': 'InterviewAssignment', 'schema_version': 'v1',
                                 'data': {'interview_id': iv['id'], 'interviewer': ivr['name'], 'candidate': cand['name']}}])
@@ -950,8 +1008,70 @@ def list_interviewers():
                                               'invite_status': {'$in': ['pending', 'accepted']}})
         out.append({'id': i['id'], 'name': i['name'], 'email': i['email'], 'role': i.get('role'),
                     'skills': i.get('skills'), 'seniority': i.get('seniority'),
-                    'active': i.get('active'), 'current_load': load})
+                    'active': i.get('active'), 'current_load': load,
+                    'availability': i.get('availability') or []})
     return out
+
+
+class NewInterviewer(BaseModel):
+    name: str
+    email: str
+    role: str = ''
+    skills: List[str] = []
+    availability: List[str] = []
+
+
+@api.post("/interviewers")
+def create_interviewer(body: NewInterviewer, request: Request):
+    current_user(request)
+    email = body.email.strip()
+    if not email:
+        raise HTTPException(400, 'email is required')
+    if db.interviewers.find_one({'email': email}):
+        raise HTTPException(409, f'{email} already exists')
+    ivr = {'id': uid(), 'name': body.name.strip() or email, 'email': email,
+           'role': body.role.strip(), 'skills': [s.strip() for s in body.skills if s.strip()],
+           'seniority': '', 'max_weekly': 5, 'active': True,
+           'availability': [a.strip() for a in body.availability if a.strip()]}
+    db.interviewers.insert_one(ivr)
+    return {'id': ivr['id'], 'name': ivr['name'], 'email': ivr['email'], 'role': ivr['role'],
+            'skills': ivr['skills'], 'seniority': ivr['seniority'], 'active': ivr['active'],
+            'availability': ivr['availability'], 'current_load': 0}
+
+
+class UpdateInterviewer(BaseModel):
+    name: Optional[str] = None
+    role: Optional[str] = None
+    skills: Optional[List[str]] = None
+    availability: Optional[List[str]] = None
+
+
+@api.patch("/interviewers/{iid}")
+def update_interviewer(iid: str, body: UpdateInterviewer, request: Request):
+    # Edit-in-place for a roster entry that already exists — most often reached from
+    # the "this interviewer already exists" path on the create form, but also a
+    # standalone edit affordance on each panel card (e.g. refreshing availability).
+    current_user(request)
+    ivr = db.interviewers.find_one({'id': iid}, NO_ID)
+    if not ivr:
+        raise HTTPException(404, 'interviewer not found')
+    update = {}
+    if body.name is not None:
+        update['name'] = body.name.strip() or ivr['name']
+    if body.role is not None:
+        update['role'] = body.role.strip()
+    if body.skills is not None:
+        update['skills'] = [s.strip() for s in body.skills if s.strip()]
+    if body.availability is not None:
+        update['availability'] = [a.strip() for a in body.availability if a.strip()]
+    if update:
+        db.interviewers.update_one({'id': iid}, {'$set': update})
+        ivr = db.interviewers.find_one({'id': iid}, NO_ID)
+    load = db.interviews.count_documents({'interviewer_id': iid, 'result': None,
+                                          'invite_status': {'$in': ['pending', 'accepted']}})
+    return {'id': ivr['id'], 'name': ivr['name'], 'email': ivr['email'], 'role': ivr.get('role'),
+            'skills': ivr.get('skills') or [], 'seniority': ivr.get('seniority'), 'active': ivr.get('active'),
+            'availability': ivr.get('availability') or [], 'current_load': load}
 
 
 # ---------- import ----------
@@ -1031,7 +1151,8 @@ async def import_interviewers(request: Request, file: UploadFile = File(...)):
             else:
                 db.interviewers.insert_one({'id': uid(), 'name': row.get('name') or email, 'email': email,
                                             'role': row.get('role') or '', 'skills': skills,
-                                            'seniority': row.get('seniority') or '', 'max_weekly': 5, 'active': True})
+                                            'seniority': row.get('seniority') or '', 'max_weekly': 5, 'active': True,
+                                            'availability': []})
                 created += 1
         except (PyMongoError, KeyError, ValueError) as e:
             logger.warning('Import row failed: file=%s row=%d', file.filename, i, exc_info=True)
