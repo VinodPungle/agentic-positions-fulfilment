@@ -38,7 +38,7 @@ export default function Dashboard() {
     <div className="p-8 space-y-8">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="font-heading font-black text-4xl sm:text-5xl tracking-tight leading-none">Staffing Pipeline Dashboard</h1>
+          <h1 className="font-heading font-black text-4xl sm:text-5xl tracking-tight leading-none">Staffing Positions</h1>
           <p className="font-mono text-xs text-muted-foreground mt-2 tracking-[0.15em]">
             {user?.role === "pm" ? `SCOPED TO ${user.projects.join(", ").toUpperCase()}` : "ACCOUNT-WIDE VIEW"} · {positions.length} POSITIONS
           </p>
